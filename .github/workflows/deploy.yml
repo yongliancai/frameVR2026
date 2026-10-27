@@ -1,0 +1,45 @@
+# 推到 main 就自動部署到 VPS
+# 啟用方式（GitHub repo → Settings → Secrets and variables → Actions）：
+#   Variables：DEPLOY_ENABLED = true
+#   Secrets：  VPS_HOST（VPS 的 IP）、VPS_USER（登入帳號）、VPS_SSH_KEY（部署用私鑰全文）
+# 沒設定 DEPLOY_ENABLED 時只會跑語法檢查，不會部署。
+name: check-and-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 語法檢查
+        run: |
+          for f in server.js src/*.js public/app.js frame-script/*.js scripts/*.js; do node --check "$f"; done
+      - name: 啟動測試
+        run: |
+          DB_PATH=/tmp/ci.db PORT=3999 node server.js &
+          sleep 2
+          curl -fsS http://127.0.0.1:3999/api/health
+          curl -fsS -XPOST http://127.0.0.1:3999/api/events -H 'Content-Type: text/plain' \
+            -d '{"events":[{"type":"session_start","student_id":"CI","session_id":"ci-1"}]}' | grep '"inserted":1'
+
+  deploy:
+    needs: check
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 到 VPS 更新
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: bash /opt/framevr2026/deploy/update.sh

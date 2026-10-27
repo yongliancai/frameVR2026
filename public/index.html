@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FrameVR 學習行為後台</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">FrameVR 學習行為後台</div>
+  <nav id="tabs" aria-label="分頁">
+    <a href="#overview">總覽</a>
+    <a href="#students">學生</a>
+    <a href="#materials">教材</a>
+    <a href="#clicks">點擊</a>
+    <a href="#events">事件紀錄</a>
+    <a href="#system">系統</a>
+  </nav>
+</header>
+
+<section class="filters" aria-label="篩選">
+  <div class="seg" id="range">
+    <button data-range="today">今天</button>
+    <button data-range="7">近 7 天</button>
+    <button data-range="30" class="on">近 30 天</button>
+    <button data-range="all">全部</button>
+  </div>
+  <label>從 <input type="date" id="from"></label>
+  <label>到 <input type="date" id="to"></label>
+  <label>空間 <select id="frame"><option value="">全部 Frame</option></select></label>
+  <label class="chk"><input type="checkbox" id="auto" checked> 每 30 秒自動更新</label>
+  <span class="stamp" id="stamp"></span>
+</section>
+
+<main id="view"></main>
+
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <button class="drawer-close" id="drawer-close" aria-label="關閉">✕</button>
+    <div id="drawer-body"></div>
+  </div>
+</div>
+
+<div id="tip" class="tip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

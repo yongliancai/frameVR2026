@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>喜歡・收藏</title>
+<style>
+  :root { --bg:#1f2533; --fg:#f2f4f8; --muted:#a9b1c3; --like:#c2456b; --fav:#b38a1d; --line:#3a4256; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: system-ui, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+  main { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:16px; text-align:center; }
+  h1 { font-size:clamp(18px, 5vw, 28px); margin:0; }
+  .who { color:var(--muted); font-size:14px; }
+  .who button { background:none; border:0; color:var(--muted); text-decoration:underline; cursor:pointer; font:inherit; }
+  .row { display:flex; gap:12px; }
+  .btn { min-width:130px; padding:14px 18px; border-radius:14px; border:2px solid var(--line); background:transparent; color:var(--fg); font-size:clamp(16px,4.5vw,22px); cursor:pointer; }
+  .btn.like.on { background:var(--like); border-color:var(--like); }
+  .btn.fav.on { background:var(--fav); border-color:var(--fav); }
+  form { display:flex; flex-direction:column; gap:10px; align-items:center; }
+  input { font-size:20px; padding:10px 14px; border-radius:10px; border:1px solid var(--line); background:#2c3446; color:var(--fg); width:min(280px, 80vw); text-align:center; }
+  .ok { padding:10px 26px; border-radius:10px; border:0; background:#3b7ddd; color:#fff; font-size:18px; cursor:pointer; }
+  .msg { min-height:20px; font-size:14px; color:var(--muted); }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+/*
+  放到 FrameVR「網頁瀏覽器（Web Browser）」物件中使用：
+  https://你的網域/framevr/widget/like.html?k=INGEST_KEY&id=board-water-cycle&name=水循環&frame=my-frame
+  學生第一次按時輸入學號，之後同一台裝置記住。
+*/
+(function () {
+  const q = new URLSearchParams(location.search);
+  const API = location.pathname.replace(/\/widget\/.*$/, '') + '/api/events';
+  const KEY = q.get('k') || '';
+  const T = { id: q.get('id') || 'unknown', name: q.get('name') || q.get('id') || '教材', type: q.get('type') || 'material', frame: q.get('frame') || null };
+  const app = document.getElementById('app');
+  const LS = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  const today = new Date().toISOString().slice(0, 10);
+  let sid = LS.get('fvt_student_id');
+
+  function uuid() { return (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + Math.random().toString(16).slice(2); }
+  const k = (kind) => 'fvt_' + kind + '_' + sid + '_' + T.id;
+
+  function renderLogin() {
+    app.innerHTML = '<h1>' + esc(T.name) + '</h1><form id="f"><label for="sid">請輸入你的學號或座號</label><input id="sid" autocomplete="off" required><button class="ok">確定</button></form>';
+    document.getElementById('f').onsubmit = (e) => {
+      e.preventDefault();
+      const v = document.getElementById('sid').value.trim().replace(/\s+/g, '').slice(0, 64);
+      if (!v) return;
+      sid = v; LS.set('fvt_student_id', v); render();
+    };
+  }
+
+  function render() {
+    if (!sid) return renderLogin();
+    const liked = LS.get(k('like')) === '1', faved = LS.get(k('fav')) === '1';
+    app.innerHTML =
+      '<h1>' + esc(T.name) + '</h1>' +
+      '<div class="row">' +
+        '<button class="btn like ' + (liked ? 'on' : '') + '" id="like" aria-pressed="' + liked + '">' + (liked ? '♥ 已喜歡' : '♡ 喜歡') + '</button>' +
+        '<button class="btn fav ' + (faved ? 'on' : '') + '" id="fav" aria-pressed="' + faved + '">' + (faved ? '★ 已收藏' : '☆ 收藏') + '</button>' +
+      '</div>' +
+      '<div class="msg" id="msg"></div>' +
+      '<div class="who">學號 ' + esc(sid) + '・<button id="sw">不是我</button></div>';
+    document.getElementById('like').onclick = () => toggle('like');
+    document.getElementById('fav').onclick = () => toggle('fav');
+    document.getElementById('sw').onclick = () => { sid = null; renderLogin(); };
+  }
+
+  function toggle(kind) {
+    const on = LS.get(k(kind)) === '1';
+    LS.set(k(kind), on ? '0' : '1');
+    const type = kind === 'like' ? (on ? 'unlike' : 'like') : (on ? 'unfavorite' : 'favorite');
+    send(type);
+    render();
+  }
+
+  function send(type) {
+    const ev = { event_id: uuid(), type, source: 'widget', student_id: sid, session_id: 'widget-' + sid + '-' + today, frame: T.frame,
+                 target_id: T.id, target_type: T.type, target_name: T.name, ts: Date.now(), meta: { source: 'widget' } };
+    fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ key: KEY, events: [ev] }) })
+      .then((r) => { const m = document.getElementById('msg'); if (m) m.textContent = r.ok ? '已記錄' : '記錄失敗（' + r.status + '）'; })
+      .catch(() => { const m = document.getElementById('msg'); if (m) m.textContent = '網路連線失敗'; });
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  render();
+})();
+</script>
+</body>
+</html>
