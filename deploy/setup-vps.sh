@@ -67,7 +67,7 @@ fi
 node -v
 command -v pm2 >/dev/null || npm install -g pm2
 
-# 連接埠被其他程式（例如 AI 伴侶）占用就停下
+# 連接埠被其他程式（例如 nckuchat 的 EOPA4 聊天服務）占用就停下
 if ss -ltnp 2>/dev/null | grep -q ":$PORT " && ! ss -ltnp 2>/dev/null | grep ":$PORT " | grep -q node; then
   echo "!! 連接埠 $PORT 已被其他程式使用，請改用：PORT=3070 sudo -E bash setup-vps.sh ..."; exit 1
 fi
