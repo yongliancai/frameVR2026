@@ -19,7 +19,7 @@ jobs:
       - run: npm ci
       - name: 語法檢查
         run: |
-          for f in server.js src/*.js public/app.js frame-script/*.js scripts/*.js; do node --check "$f"; done
+          for f in server.js src/*.js public/app.js scripts/*.js; do node --check "$f"; done
           bash -n deploy.sh
       - name: 啟動測試（與正式環境相同的 /framevr 子路徑）
         run: |

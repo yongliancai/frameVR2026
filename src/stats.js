@@ -2,7 +2,8 @@
 const db = require('./db');
 
 const TZ_OFFSET_MS = Number(process.env.TZ_OFFSET_MIN ?? 480) * 60 * 1000; // 預設 UTC+8（台灣）
-const ONLINE_WINDOW_MS = 90 * 1000; // 90 秒內有心跳視為在線
+// 最近幾分鐘內有動作就視為「在場上」（Action Editor 沒有心跳，只能用最後一次動作判斷）
+const ONLINE_WINDOW_MS = Number(process.env.ONLINE_WINDOW_MIN || 5) * 60 * 1000;
 
 // 共用篩選條件：from / to（毫秒或日期字串）、frame、student
 function filters(q, alias = 'e', tsCol = 'ts') {
@@ -299,7 +300,7 @@ function exportSessionsCsv(q, write) {
       start_local: iso(r.start_ts),
       end_local: iso(r.end_ts || r.last_ts),
       duration_sec: Math.round(r.dur / 1000),
-      ended_normally: r.end_ts ? 1 : 0,
+      ended_normally: r.end_ts && r.end_reason !== 'timeout' ? 1 : 0,
     });
     write(cols.map((c) => csvCell(r[c])).join(',') + '\n');
   }

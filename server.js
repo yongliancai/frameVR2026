@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { ingest } = require('./src/ingest');
+const { handleFrameAction } = require('./src/frameAction');
 const stats = require('./src/stats');
 const db = require('./src/db');
 
@@ -54,13 +55,25 @@ router.post('/api/events', ingestCors, parseAny, checkIngestKey, (req, res) => {
   res.status(out.status).json(out.json);
 });
 
-// 探測腳本回報 Frame Script 可用的環境（第一次部署時用）
-router.options('/api/probe', ingestCors);
-router.post('/api/probe', ingestCors, parseAny, checkIngestKey, (req, res) => {
-  const body = { ...req.body }; delete body.key;
-  db.prepare('INSERT INTO probes (server_ts, payload) VALUES (?, ?)').run(Date.now(), JSON.stringify(body).slice(0, 20000));
-  res.json({ ok: true });
+// FrameVR Action Editor「API Call」動作呼叫的入口（POST JSON 或 GET 網址參數皆可）
+const actionCors = cors({
+  origin: ALLOWED_ORIGINS.includes('*') ? true : ALLOWED_ORIGINS,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  maxAge: 86400, // allowedHeaders 不指定：照瀏覽器要求的標頭放行（例如 X-API-Key）
 });
+const frameAction = (req, res) => {
+  const params = { ...(req.query || {}), ...(req.body && typeof req.body === 'object' ? req.body : {}) };
+  try {
+    const out = handleFrameAction(params, req.get('user-agent'));
+    res.status(out.status).json(out.json);
+  } catch (e) {
+    console.error('[frame-action]', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+};
+router.options('/api/frame-action', actionCors);
+router.get('/api/frame-action', actionCors, checkIngestKey, frameAction);
+router.post('/api/frame-action', actionCors, parseAny, checkIngestKey, frameAction);
 
 router.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 
@@ -93,7 +106,12 @@ dash.get('/api/clicks', wrap((req) => stats.clicks(req.query)));
 dash.get('/api/sequences', wrap((req) => stats.sequences(req.query)));
 dash.get('/api/event-list', wrap((req) => stats.eventList(req.query)));
 dash.get('/api/frames', wrap(() => stats.frames()));
-dash.get('/api/probes', wrap(() => db.prepare('SELECT * FROM probes ORDER BY id DESC LIMIT 20').all()));
+dash.get('/api/probes', wrap(() => db.prepare('SELECT * FROM probes ORDER BY id DESC LIMIT 30').all()));
+dash.get('/api/config', wrap(() => ({
+  session_gap_min: Number(process.env.SESSION_GAP_MIN || 15),
+  max_material_min: Number(process.env.MAX_MATERIAL_MIN || 10),
+  key_set: !!INGEST_KEY,
+})));
 
 dash.get('/api/export/:kind.csv', (req, res) => {
   const kind = req.params.kind;

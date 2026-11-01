@@ -1,29 +1,34 @@
 # FrameVR 學習行為紀錄系統
 
-FrameVR 空間內的 Frame Script 追蹤學生行為 → 批次 POST 到你的伺服器 → SQLite 儲存 → 網頁後台視覺化與 CSV 匯出。
+FrameVR 物件的 **Action Editor →「API Call」** 把學生的行為送到你的伺服器 → SQLite 儲存 → 網頁後台視覺化與 CSV 匯出。不需要在 FrameVR 寫程式。
 
 ```
-FrameVR（學生瀏覽器）                     你的伺服器（Nginx → PM2 → Node/Express）
-┌─────────────────────────┐   POST     ┌──────────────────────────────────────┐
-│ tracker.js（Frame Script）│ ────────▶ │ /api/events   事件收集（金鑰驗證、去重）│
-│  進場輸入學號             │  每 5 秒   │ SQLite: events / sessions             │
-│  心跳、點擊、教材、喜好     │  批次送出   │ /            後台網頁（帳密登入）       │
-└─────────────────────────┘            │ /api/export  CSV 匯出                  │
- widget/like.html（選用）  ────────▶    └──────────────────────────────────────┘
+FrameVR（學生）                                   nckuchat.online/framevr（PM2 → Node/Express）
+┌──────────────────────────────┐   API Call      ┌──────────────────────────────────────────┐
+│ 進場 Nametag 輸入固定編號      │  ─────────────▶ │ /api/frame-action  金鑰驗證               │
+│ 物件的 Action Editor：         │  X-API-Key      │   ↳ 切分工作階段、推算教材互動時間、喜好切換 │
+│  出生點 Proximity → enter      │                 │ SQLite: events / sessions                 │
+│  教材 Click → material         │                 │ /             後台網頁（帳密登入）          │
+│  按鈕 Click → click/like/...   │                 │ /api/export   CSV 匯出                     │
+└──────────────────────────────┘                 └──────────────────────────────────────────┘
 ```
+
+> 2023 年曾有的 Frame Script（Script Editor）已不在目前版本的 FrameVR（v0.66）中，所以改用官方的 Action Editor「API Call」動作。
 
 ## 六項功能對應
 
-| 需求 | 前端事件 | 後台呈現 |
+| 需求 | 怎麼記錄 | 後台呈現 |
 |---|---|---|
-| 1. 使用時間（進入、離開、累積時長） | `session_start`、每 30 秒 `heartbeat`、`session_end` | 總覽 KPI、每日時長、學生表、每次使用時長條 |
-| 2. 物件點擊（展板、3D 模型、影片、按鈕） | `click` + `target_type`（board / model / video / button） | 「點擊」分頁：前 15 名、依類型統計 |
-| 3. 教材互動歷程（開啟次數、互動時間、先後順序） | `material_open` / `material_close`（`duration_ms`）、每筆 `seq` | 「教材」分頁：開啟次數、平均互動、A→B 瀏覽順序、第一個開啟的教材；學生抽屜的逐筆歷程 |
-| 4. 喜好（喜歡、取消喜歡、收藏） | `like` / `unlike` / `favorite` / `unfavorite` | 教材明細「目前喜歡／收藏人數」與取消次數；學生的目前喜好 |
-| 5. 身分與工作階段 | 每筆事件都帶 `student_id`、`session_id`、毫秒 `ts` | 事件紀錄分頁、學生抽屜依工作階段分組 |
-| 6. 透過 API 存到外部資料庫 | `POST /api/events`（批次、失敗時暫存 localStorage 重送、`event_id` 去重） | `data/framevr.db`，可匯出 events / sessions CSV |
+| 1. 使用時間（進入、離開、累積時長） | 出生點 Proximity → `enter`；出口 → `leave`（選用）；超過 15 分鐘沒動作自動視為離開 | 總覽 KPI、每日時長、學生表、每次使用時長條 |
+| 2. 物件點擊（展板、3D 模型、影片、按鈕） | 每個物件 Click → `material` 或 `click`，`category` 標記類型 | 「點擊」分頁：前 15 名、依類型統計 |
+| 3. 教材互動歷程（開啟次數、互動時間、先後順序） | 點教材＝開啟；開啟下一份、離開或逾時＝關閉並計算時長；每筆有 `seq` | 「教材」分頁：開啟次數、平均互動、A→B 瀏覽順序、第一個開啟的教材；學生的逐筆歷程 |
+| 4. 喜好（喜歡、取消喜歡、收藏） | 教材旁的喜歡／收藏按鈕 Click → `like` / `favorite`，每按一次切換 | 教材明細「目前喜歡／收藏人數」與取消次數；學生的目前喜好 |
+| 5. 身分與工作階段 | `%nametag%`（進場輸入的固定編號）＋ `%uniqueUserId%`（核對用）；工作階段由伺服器切分 | 事件紀錄分頁、學生的工作階段分組 |
+| 6. 透過 API 存到外部資料庫 | Action Editor「API Call」→ `POST /api/frame-action` | `data/framevr.db`，可匯出 events / sessions CSV |
 
-**離開時間的判定**：收到 `session_end`（關分頁、離開頁面）就用那個時間；沒收到（當機、斷網、直接關機）就用最後一次心跳時間估算，誤差最多 30 秒。後台會標示哪些是估算的。
+**估算說明**（研究報告請註明）：FrameVR 沒有提供「離開」與「持續停留」的訊號，所以
+- 離開時間＝點了出口／離開物件的時間；沒點的話＝最後一次動作的時間。
+- 教材互動時間＝開啟到下一個教材／離開的時間（上限 10 分鐘）；開啟後就沒有任何動作的，時長記為未知、不列入平均。
 
 ## 部署到 nckuchat.online（CloudPanel + PM2，與 nckuchat 相同流程）
 
@@ -82,82 +87,79 @@ curl http://127.0.0.1:3060/framevr/api/health
 
 > 想先看後台長什麼樣：在本機 `npm install` 後執行 `DB_PATH=./data/demo.db npm run seed`，再 `DB_PATH=./data/demo.db npm start`，開 `http://127.0.0.1:3060/`。
 
-## 放進 FrameVR
+## 在 FrameVR 設定（Action Editor）
 
-### 第一步：探測環境（只做一次）
+後台的「**FrameVR 設定**」分頁有完整的 URL 與可一鍵複製的 Body 範本，以下是流程。
 
-FrameVR 沒有公開 Frame Script 的完整 API 文件，所以先確認你的 Frame 裡能用哪些東西：
+### 1. 在 FrameVR 新增 API 金鑰（只做一次）
+FrameVR 右側選單 → **PROFILE** → API Keys → 新增一把金鑰，值填伺服器 `.env` 的 `INGEST_KEY`（`sudo grep INGEST_KEY /home/nckuchat/framevr2026/.env`）。
 
-1. Frame 側欄綠色圖示列的 `<>`（Script Editor）→ 新增 Script → 貼上 `frame-script/probe.js`
-2. 改上面的 `API_BASE`（`https://nckuchat.online/framevr`）、`INGEST_KEY`，儲存並重新進入 Frame
-3. 隨意點幾個展板、模型、影片
-4. 到後台「系統」分頁看探測結果：
-   - `sceneFound`、`onPointerObservable` 要是 `true`，點擊紀錄才能運作
-   - `BABYLON_GUI` 是 `true` 才會出現進場學號框與喜歡／收藏按鈕（`false` 時學號改用瀏覽器輸入框，喜好改用下方的小工具）
-   - `fetch` 要是 `true`
-   - `clicked` 裡的 `name` 就是物件名稱，下一步要用
+### 2. 把物件取好名字
+教材的名稱會直接成為後台的教材名稱（`%assetName%`），例如「水循環展板」「心臟模型」。可互動的物件類型：Model、Shape、Image、Text Label、Shader（影片可用封面圖片或旁邊的按鈕代替）。
 
-確認完把 probe 刪掉。
+### 3. 替每個物件加上 API Call
+右側選單 → **FRAME SETTINGS → ACTION EDITOR** → 選物件 → **Add Trigger** → **Add Action → API Call**：
 
-### 第二步：安裝追蹤器
+| 欄位 | 值 |
+|---|---|
+| URL | `https://nckuchat.online/framevr/api/frame-action` |
+| HTTP Method | `POST` |
+| HTTP Header Name | `X-API-Key` |
+| API Key | 步驟 1 新增的金鑰 |
+| POST/PUT Body | 依用途複製下表範本 |
 
-1. 新增 Script → 貼上 `frame-script/tracker.js`
-2. 修改 `CONFIG`：
-   - `API_BASE`：`https://nckuchat.online/framevr`（安裝腳本最後會印出）
-   - `INGEST_KEY`：與 `.env` 相同
-   - `FRAME_NAME`：這個空間的名稱（多個 Frame 共用同一個後台時用來區分）
-   - `TARGETS`：把探測到的物件名稱對應成教材
+| 物件 | 觸發 | Body 的 `event` |
+|---|---|---|
+| 出生點的透明方塊 | Proximity | `enter` |
+| 展板／3D 模型／影片封面 | Click/Tap | `material`（`category` 填 `board` / `model` / `video`） |
+| 一般互動按鈕 | Click/Tap | `click`（`category`: `button`） |
+| 喜歡按鈕 | Click/Tap | `like`（`material` 填對應教材的物件名稱） |
+| 收藏按鈕 | Click/Tap | `favorite`（同上） |
+| 出口／結束按鈕（選用） | Click/Tap 或 Proximity | `leave` |
 
-```js
-TARGETS: [
-  { match: /^board_water/i, id: 'board-water-cycle', name: '展板：水循環', type: 'board', material: true },
-  { match: 'Heart_Model',   id: 'model-heart',       name: '3D 模型：心臟', type: 'model', material: true },
-  { match: 'btn_quiz',      id: 'btn-quiz',          name: '按鈕：小測驗', type: 'button' },
-]
+教材的 Body 範例（其他範本在後台複製）：
+```json
+{
+  "event": "material",
+  "category": "board",
+  "student": "%nametag%",
+  "user": "%uniqueUserId%",
+  "frame": "%frameName%",
+  "asset_id": "%assetId%",
+  "asset_name": "%assetName%",
+  "asset_type": "%assetType%"
+}
 ```
 
-`match` 可以是完整名稱或正規表達式，會一路往父層物件找。`material: true` 的物件點擊後算「開啟教材」並開始計時；點另一份教材、按「✕ 關閉」或離開 Frame 時結束計時。單次互動上限 10 分鐘（`MAX_MATERIAL_MS`）。
+設定完按 Action Editor 的 **Test**，到後台「FrameVR 設定」分頁最下方「最近收到的請求」確認有收到。
 
-`LOG_UNKNOWN_CLICKS: true` 時，沒在對照表裡的物件也會記成「其他」，可以在後台「點擊」分頁看名稱再補進來。
-
-### 喜歡／收藏的兩種做法
-
-- **內建按鈕（預設）**：學生開啟教材時，畫面下方出現「♡ 喜歡　☆ 收藏　✕ 關閉」。需要 `BABYLON_GUI` 可用。
-- **網頁小工具（備案）**：在展板旁放一個 FrameVR「網頁瀏覽器」物件，網址填：
-  ```
-  https://nckuchat.online/framevr/widget/like.html?k=INGEST_KEY&id=board-water-cycle&name=水循環&frame=my-frame
-  ```
-  `id` 要和 TARGETS 的 `id` 一致，後台才會算在同一份教材上。小工具的事件不會被算成一次「使用」。
+### 4. 學生進場
+學生在 Connect 畫面的 **Nametag** 輸入固定編號（例如 `S01`）。第一次觸發時 FrameVR 會詢問是否同意分享名牌，請學生按同意；若沒填名牌或拒絕，會改用 FrameVR 帳號 ID（顯示為 `user:...`）。
 
 ## API
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/api/events` | `{ "key": "...", "events": [ ... ] }`，一次最多 500 筆；也接受 `X-Api-Key` header |
+| POST / GET | `/api/frame-action` | FrameVR Action Editor 呼叫用。需 `X-API-Key` header（或 `?key=`）。欄位見下方 |
+| POST | `/api/events` | 一般事件批次寫入 `{ "events": [ ... ] }`（自訂工具用） |
 | GET | `/api/overview` `/api/students` `/api/students/:id` `/api/materials` `/api/clicks` `/api/sequences` `/api/event-list` | 後台資料，可帶 `from`、`to`（YYYY-MM-DD）、`frame`、`student` |
 | GET | `/api/export/events.csv`、`/api/export/sessions.csv` | CSV（含 BOM，Excel 直接開中文不會亂碼） |
 
-事件欄位：
+`/api/frame-action` 欄位：
 
-```json
-{
-  "event_id": "uuid（去重用）",
-  "seq": 12,
-  "type": "material_close",
-  "student_id": "S0312",
-  "session_id": "uuid（每次進入產生）",
-  "frame": "science-museum",
-  "target_id": "model-heart",
-  "target_type": "model",
-  "target_name": "3D 模型：心臟",
-  "duration_ms": 48210,
-  "ts": 1793102160094,
-  "meta": { "reason": "switch", "clicks_inside": 2 }
-}
-```
+| 欄位 | 說明 |
+|---|---|
+| `event` | `enter` `material` `click` `like` `favorite` `unlike` `unfavorite` `leave` |
+| `student` | `%nametag%`；空白或 Guest 時改用 `user` |
+| `user` | `%uniqueUserId%` |
+| `frame` `asset_id` `asset_name` `asset_type` | `%frameName%` `%assetId%` `%assetName%` `%assetType%` |
+| `category` | 選填：`board` `model` `video` `button`；未填依 `asset_type` 推測 |
+| `material` | 喜歡／收藏按鈕對應的教材物件名稱；未填就用學生目前開著的教材 |
+
+回應範例：`{"ok":true,"student":"S01","session_id":"…","recorded":["click","material_close","material_open"]}`
 
 ## 研究使用注意
 
-- 學生識別碼建議用座號或研究編號，不要用真實姓名；資料庫只存你在學號框輸入的字串。
+- 學生識別碼請用固定的研究編號（Nametag），不要用真實姓名；資料庫另外存 FrameVR 帳號 ID 供核對。
 - 正式施測前，先用自己的帳號走一遍，到「事件紀錄」確認每種事件都有進來。
 - 備份：`data/framevr.db` 就是全部資料，可用 `sqlite3 data/framevr.db ".backup backup.db"` 線上備份。

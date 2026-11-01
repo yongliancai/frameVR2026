@@ -142,7 +142,7 @@
     return {
       html: `
         <div class="kpis">
-          ${kpi('目前在線', fmtNum(k.online_now), '人', '<span class="dot" aria-hidden="true"></span>')}
+          ${kpi('近 5 分鐘有動作', fmtNum(k.online_now), '人', '<span class="dot" aria-hidden="true"></span>')}
           ${kpi('學生數', fmtNum(k.students), '人')}
           ${kpi('使用次數', fmtNum(k.sessions), '次')}
           ${kpi('累積使用時長', fmtNum(k.total_minutes), '分鐘')}
@@ -223,7 +223,7 @@
         ${rows.length ? `<div class="table-wrap"><table>
           <thead><tr>${th('student_id', '學生識別碼')}${th('sessions', '使用次數', 1)}${th('total_ms', '累積使用時長')}${th('avg_session_ms', '平均每次', 1)}${th('clicks', '點擊', 1)}${th('opens', '開啟教材', 1)}${th('materials', '看過教材數', 1)}${th('material_ms', '教材互動時間', 1)}${th('likes', '喜歡', 1)}${th('favorites', '收藏', 1)}${th('last_seen', '最後使用', 1)}</tr></thead>
           <tbody>${rows.map((r) => `<tr class="clickable" data-student="${esc(r.student_id)}">
-            <td>${r.online ? '<span class="dot" title="在線"></span>' : ''}${esc(r.student_id)}</td>
+            <td>${r.online ? '<span class="dot" title="近 5 分鐘有動作"></span>' : ''}${esc(r.student_id)}</td>
             <td class="num">${fmtNum(r.sessions)}</td>
             <td><div class="bar-cell"><div class="bar" style="width:${Math.max(2, (r.total_ms / maxMs) * 120)}px"></div>${fmtDur(r.total_ms)}</div></td>
             <td class="num">${fmtDur(r.avg_session_ms)}</td>
@@ -259,7 +259,7 @@
     const timeline = d.sessions.slice(0, 30).map((s) => `
       <div class="tl-row">
         <div>${fmtTime(s.start_ts)}</div>
-        <div class="tl-track" title="${esc(fmtTime(s.start_ts) + ' → ' + fmtTime(s.end_ts || s.last_ts))}"><div class="tl-bar ${s.end_ts ? '' : 'open'}" style="left:0;width:${Math.max(1, (s.duration_ms / maxDur) * 100)}%"></div></div>
+        <div class="tl-track" title="${esc(fmtTime(s.start_ts) + ' → ' + fmtTime(s.end_ts || s.last_ts))}"><div class="tl-bar ${s.end_ts && s.end_reason !== 'timeout' ? '' : 'open'}" style="left:0;width:${Math.max(1, (s.duration_ms / maxDur) * 100)}%"></div></div>
         <div style="text-align:right">${fmtDur(s.duration_ms)}</div>
       </div>`).join('');
 
@@ -272,7 +272,7 @@
         <span class="wrap">${e.target_type ? `<span class="sw" style="background:${slot(TYPE_SLOT[e.target_type] || 7)}"></span>` : ''}${esc(e.target_name || '')}${e.target_type ? ` <span class="pill">${esc(TYPE_LABEL[e.target_type] || e.target_type)}</span>` : ''}</span>
         <span class="t">${e.duration_ms ? fmtDur(e.duration_ms) : ''}</span></li>`).join('');
       return `<div class="card"><div class="card-head"><div><h2>${fmtTime(s.start_ts)}　${fmtDur(s.duration_ms)}</h2>
-        <p class="sub">工作階段 ${esc(s.session_id)}・${s.end_ts ? '離開 ' + fmtTime(s.end_ts) + (s.end_reason ? '（' + esc(s.end_reason) + '）' : '') : (s.online ? '仍在線上' : '未收到離開訊號，以最後心跳 ' + fmtTime(s.last_ts) + ' 估算')}・${s.frame ? esc(s.frame) : ''}</p></div></div>
+        <p class="sub">工作階段 ${esc(s.session_id)}・${s.end_ts && s.end_reason !== 'timeout' ? '離開 ' + fmtTime(s.end_ts) : (s.online ? '進行中' : '閒置逾時，以最後一次動作 ' + fmtTime(s.last_ts) + ' 當作離開時間')}・${s.frame ? esc(s.frame) : ''}</p></div></div>
         ${items ? `<ul class="seq">${items}</ul>` : '<div class="empty">沒有互動事件</div>'}</div>`;
     }).join('');
 
@@ -284,7 +284,7 @@
         <div class="kpi"><div class="label">喜歡的教材</div><div class="value">${d.preferences.filter((p) => p.liked).length}</div></div>
         <div class="kpi"><div class="label">收藏的教材</div><div class="value">${d.preferences.filter((p) => p.favorited).length}</div></div>
       </div>
-      <div class="card" style="margin-bottom:16px"><h2>每次使用時長</h2><p class="sub">最近 30 次；斜紋代表沒有收到離開訊號</p><div class="timeline">${timeline || '<div class="empty">沒有資料</div>'}</div></div>
+      <div class="card" style="margin-bottom:16px"><h2>每次使用時長</h2><p class="sub">最近 30 次；斜紋代表沒有點「離開」，時長以最後一次動作估算</p><div class="timeline">${timeline || '<div class="empty">沒有資料</div>'}</div></div>
       ${d.preferences.length ? `<div class="card" style="margin-bottom:16px"><h2>目前的喜好</h2><p class="sub">以最後一次操作為準</p>
         <table><thead><tr><th>教材</th><th>喜歡</th><th>收藏</th></tr></thead><tbody>${d.preferences.map((p) => `<tr><td>${esc(p.target_name || p.target_id)}</td><td>${p.liked ? '♥' : ''}</td><td>${p.favorited ? '★' : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
       <div class="row" style="margin-bottom:10px"><h2 style="font-size:15px;margin:0">操作歷程</h2><span class="sub" style="margin:0;color:var(--muted)">每次工作階段內依先後順序（#）列出</span>
@@ -388,19 +388,56 @@
     };
   }
 
-  // ---------- 系統 ----------
+  // ---------- 設定（FrameVR Action Editor） ----------
+  const TEMPLATES = [
+    { key: 'enter', title: '進入（出生點的靠近觸發）', trigger: 'Proximity（靠近）', note: '在出生點放一個透明的大方塊，學生一進場就會觸發，記錄「進入時間」。',
+      body: { event: 'enter', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
+    { key: 'material', title: '開啟教材（展板／3D 模型／影片封面）', trigger: 'Click/Tap（點擊）', note: '每份教材都用同一段內容，教材名稱會自動帶入物件名稱（%assetName%），請先把物件取好名字。category 依物件改成 board、model 或 video。',
+      body: { event: 'material', category: 'board', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
+    { key: 'click', title: '互動按鈕（非教材）', trigger: 'Click/Tap（點擊）', note: '例如測驗按鈕、傳送門，只記錄點擊次數。',
+      body: { event: 'click', category: 'button', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
+    { key: 'like', title: '喜歡按鈕', trigger: 'Click/Tap（點擊）', note: '每按一次在「喜歡／取消喜歡」之間切換。material 填這顆按鈕對應的教材物件名稱（和教材的物件名稱完全一樣）。',
+      body: { event: 'like', material: '教材物件名稱', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_name: '%assetName%' } },
+    { key: 'favorite', title: '收藏按鈕', trigger: 'Click/Tap（點擊）', note: '每按一次在「收藏／取消收藏」之間切換，material 同上。',
+      body: { event: 'favorite', material: '教材物件名稱', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_name: '%assetName%' } },
+    { key: 'leave', title: '離開（選用）', trigger: 'Click/Tap 或 Proximity', note: '放在出口或「結束」按鈕上。沒有設定也沒關係，閒置超過設定時間會自動當作離開。',
+      body: { event: 'leave', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_name: '%assetName%' } },
+  ];
+
   async function renderSystem() {
-    const probes = await fetch('api/probes').then((r) => r.json());
+    const [probes, cfg] = await Promise.all([fetch('api/probes').then((r) => r.json()), fetch('api/config').then((r) => r.json())]);
     const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+    const url = base + 'api/frame-action';
+    const tpl = TEMPLATES.map((t) => `
+      <div class="card">
+        <div class="card-head"><div><h2>${esc(t.title)}</h2><p class="sub">觸發：${esc(t.trigger)}　${esc(t.note)}</p></div>
+          <button class="btn copy" data-copy="${esc(JSON.stringify(t.body, null, 2))}">複製 Body</button></div>
+        <pre class="code">${esc(JSON.stringify(t.body, null, 2))}</pre>
+      </div>`).join('');
     return {
       html: `
-        <div class="card"><h2>串接資訊</h2><p class="sub">貼進 frame-script/tracker.js 的 CONFIG</p>
-          <pre class="code">API_BASE: '${esc(base.replace(/\/$/, ''))}'
-事件 API：POST ${esc(base)}api/events
-喜好小工具：${esc(base)}widget/like.html?k=INGEST_KEY&amp;id=教材識別碼&amp;name=教材名稱&amp;frame=Frame名稱</pre></div>
-        <div class="card"><h2>環境探測結果</h2><p class="sub">在 Frame 裡執行 probe.js 後會出現在這裡（最近 20 筆）</p>
-          ${probes.length ? probes.map((p) => `<p class="sub" style="margin:10px 0 4px">${fmtTime(p.server_ts)}</p><pre class="code">${esc(JSON.stringify(JSON.parse(p.payload), null, 2))}</pre>`).join('') : '<div class="empty">尚未收到探測結果</div>'}
+        <div class="card"><h2>FrameVR Action Editor 設定</h2>
+          <p class="sub">右側選單 → FRAME SETTINGS → ACTION EDITOR → 選物件 → Add Trigger → Add Action → <b>API Call</b>，填入下面的值</p>
+          <table><tbody>
+            <tr><th>URL</th><td><code>${esc(url)}</code> <button class="btn copy" data-copy="${esc(url)}">複製</button></td></tr>
+            <tr><th>HTTP Method</th><td><code>POST</code></td></tr>
+            <tr><th>HTTP Header Name</th><td><code>X-API-Key</code></td></tr>
+            <tr><th>API Key</th><td>選你在 FrameVR「PROFILE → API Keys」新增的金鑰（值＝伺服器 .env 的 INGEST_KEY）${cfg.key_set ? '' : '　<b>⚠ 伺服器尚未設定 INGEST_KEY</b>'}</td></tr>
+            <tr><th>POST/PUT Body</th><td>依物件用途，複製下方對應的內容</td></tr>
+          </tbody></table>
+          <p class="sub" style="margin-top:10px">目前設定：超過 ${cfg.session_gap_min} 分鐘沒有動作就算下一次使用；單次教材互動時間上限 ${cfg.max_material_min} 分鐘。學生第一次觸發時，FrameVR 會詢問是否同意分享名牌，請提醒學生按同意。</p>
+        </div>
+        ${tpl}
+        <div class="card"><h2>最近收到的請求</h2><p class="sub">FrameVR 每次呼叫 API 的原始內容（最近 30 筆，可用來檢查設定是否正確；%變數% 沒被替換代表該欄位沒有值）</p>
+          ${probes.length ? probes.map((p) => `<p class="sub" style="margin:10px 0 4px">${fmtTime(p.server_ts)}</p><pre class="code">${esc(JSON.stringify(JSON.parse(p.payload), null, 2))}</pre>`).join('') : '<div class="empty">還沒有收到任何請求。設定好後，在 Action Editor 按 Test，或進入 Frame 點一下物件。</div>'}
         </div>`,
+      after() {
+        view.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '已複製'; }
+          catch (e) { b.textContent = '請手動選取'; }
+          setTimeout(() => { b.textContent = b.dataset.copy.startsWith('{') ? '複製 Body' : '複製'; }, 1500);
+        }));
+      },
     };
   }
 
