@@ -1,0 +1,30 @@
+# 每次 push 到 main 自動做語法檢查與啟動測試（部署仍在主機上執行 sudo ./deploy.sh）
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 語法檢查
+        run: |
+          for f in server.js src/*.js public/app.js frame-script/*.js scripts/*.js; do node --check "$f"; done
+          bash -n deploy.sh
+      - name: 啟動測試（與正式環境相同的 /framevr 子路徑）
+        run: |
+          DB_PATH=/tmp/ci.db PORT=3999 BASE_PATH=/framevr node server.js &
+          sleep 2
+          curl -fsS http://127.0.0.1:3999/framevr/api/health
+          curl -fsS -XPOST http://127.0.0.1:3999/framevr/api/events -H 'Content-Type: text/plain' \
+            -d '{"events":[{"type":"session_start","student_id":"CI","session_id":"ci-1"}]}' | grep '"inserted":1'

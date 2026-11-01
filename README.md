@@ -25,63 +25,62 @@ FrameVR（學生瀏覽器）                     你的伺服器（Nginx → PM2
 
 **離開時間的判定**：收到 `session_end`（關分頁、離開頁面）就用那個時間；沒收到（當機、斷網、直接關機）就用最後一次心跳時間估算，誤差最多 30 秒。後台會標示哪些是估算的。
 
-## 部署到 VPS（Hostinger 等 Ubuntu 主機）
+## 部署到 nckuchat.online（CloudPanel + PM2，與 nckuchat 相同流程）
 
-### 1. 選擇網址
+後台網址：`https://nckuchat.online/framevr/`。跟 nckuchat 的 `app`（8080）共用同一台主機、同一個 root PM2，本系統用 3060。
 
-| 掛法 | 網址範例 | 需要先做 |
-|---|---|---|
-| **子路徑（建議）** | `https://nckuchat.online/framevr/` | 不用改 DNS，沿用網站現有的 HTTPS 憑證 |
-| 獨立子網域 | `https://framevr.nckuchat.online/` | DNS 新增 A 紀錄 `framevr` → VPS 的 IP |
+| 項目 | 位置 |
+|---|---|
+| Git checkout（nckuchat 帳號擁有） | `/home/nckuchat/framevr2026-deploy` |
+| 正式目錄（PM2 從這裡執行） | `/home/nckuchat/framevr2026` |
+| 設定檔 | `/home/nckuchat/framevr2026/.env` |
+| 資料庫 | `/home/nckuchat/framevr2026/data/framevr.db` |
+| PM2 名稱 | `framevr-tracker` |
 
-### 2. 首次安裝（SSH 進 VPS 執行一次）
+### 首次安裝（只做一次）
 
 ```bash
-ssh root@VPS的IP
-curl -fsSL https://raw.githubusercontent.com/yongliancai/frameVR2026/main/deploy/setup-vps.sh -o setup-vps.sh
+# 1. 用 nckuchat 帳號建立 checkout
+sudo su - nckuchat -c "git clone https://github.com/yongliancai/frameVR2026.git /home/nckuchat/framevr2026-deploy"
 
-# 子路徑：
-sudo bash setup-vps.sh nckuchat.online 你的email /framevr
-# 或子網域：
-# sudo bash setup-vps.sh framevr.nckuchat.online 你的email
+# 2. 建立正式目錄與 .env
+sudo mkdir -p /home/nckuchat/framevr2026
+sudo cp /home/nckuchat/framevr2026-deploy/.env.example /home/nckuchat/framevr2026/.env
+node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"   # 產生 INGEST_KEY，貼進 .env
+sudo nano /home/nckuchat/framevr2026/.env        # 填 INGEST_KEY、DASHBOARD_PASS；BASE_PATH=/framevr、PORT=3060 保持不變
+sudo chmod 600 /home/nckuchat/framevr2026/.env
+
+# 3. 第一次部署（之後每次更新也是這行）
+cd /home/nckuchat/framevr2026-deploy
+sudo ./deploy.sh
 ```
 
-腳本會安裝 Node.js 22 與 PM2，產生 `.env`，最後印出**後台密碼**與 **INGEST_KEY**，請記下來（也存在 `/opt/framevr2026/.env`）。
+4. **Nginx**：CloudPanel → Sites → nckuchat.online → **Vhost**，把 `deploy/nginx-location.conf` 裡的兩個 `location` 區塊貼進有 `listen 443` 的 `server {` 區塊（例如 `location / {` 的上一行），按 Save。
+5. 打開 `https://nckuchat.online/framevr/`，用 `.env` 的帳密登入。
 
-**子路徑模式不會動到網站原本的內容**：轉送規則存成 `/etc/nginx/snippets/framevr2026.conf`，網站設定裡只需要多一行 `include`。
+> `/framevr` 路徑會交給本系統處理，nckuchat 的 `public/` 裡不要放同名資料夾。
+>
+> 第一次部署若卡在安裝 `better-sqlite3`（`node-gyp` 錯誤），先執行 `sudo apt install -y build-essential python3`，再跑一次 `sudo ./deploy.sh`。
 
-- **CloudPanel 主機（nckuchat.online 就是）**：腳本不會直接改 Nginx 檔案，因為 CloudPanel 會在介面存檔時覆蓋它們。跑完後腳本會提示最後一步：到 CloudPanel → Sites → nckuchat.online → **Vhost**，在 `listen 443` 那個 `server {` 區塊內（例如 `location / {` 上一行）貼上 `include /etc/nginx/snippets/framevr2026.conf;`，再按 Save。
-  - PM2 會用 root 執行，跟 nckuchat 的 `app` 在同一個 PM2 裡，`sudo pm2 list` 可以同時看到 `app`（8080）和 `framevr-tracker`（3060）。
-  - 不會另外安裝 Nginx 或 Certbot，沿用 CloudPanel 的 Nginx 和 HTTPS 憑證。
-- **一般 Ubuntu 主機**：腳本會自動在網域的 `server { }` 區塊加 `include`，修改前先備份，`nginx -t` 檢查失敗就自動還原。
-- 預設使用連接埠 3060。如果已經被其他服務佔用，腳本會停下來，改用 `PORT=3070 sudo -E bash setup-vps.sh ...`。
-- 原本網站的 `/framevr` 路徑會交給本系統處理，請確認原網站沒有用到它。
+### 之後的版本更新
 
-> repo 若設為 Private，VPS 無法直接 clone：先在 VPS 執行 `ssh-keygen -t ed25519`，把 `~/.ssh/id_ed25519.pub` 加到 GitHub repo → Settings → Deploy keys，再用
-> `REPO_URL=git@github.com:yongliancai/frameVR2026.git sudo -E bash setup-vps.sh ...`
+```bash
+# 本機改完 → git push 到 main，然後 SSH 進主機：
+cd /home/nckuchat/framevr2026-deploy
+sudo ./deploy.sh
+```
 
-### 3. 之後的版本更新
-
-改完程式 `git push` 到 main 後，二選一：
-
-- **手動**：SSH 進 VPS 執行 `bash /opt/framevr2026/deploy/update.sh`（會先備份資料庫，保留最近 14 份）
-- **自動**：設定 GitHub Actions（`.github/workflows/deploy.yml`），每次 push 自動檢查並部署
-  1. 在 VPS 產生部署用金鑰：`ssh-keygen -t ed25519 -f ~/.ssh/gh_deploy -N ""`，再 `cat ~/.ssh/gh_deploy.pub >> ~/.ssh/authorized_keys`
-  2. GitHub repo → Settings → Secrets and variables → Actions：
-     - Secrets：`VPS_HOST`＝VPS IP、`VPS_USER`＝root（或你的帳號）、`VPS_SSH_KEY`＝`cat ~/.ssh/gh_deploy` 的完整內容
-     - Variables：`DEPLOY_ENABLED`＝`true`
-
-資料庫 `data/` 與 `.env` 不在 git 裡，更新不會覆蓋。
+`deploy.sh` 會依序：拉最新程式 → 備份資料庫（保留最近 14 份，在 `data/backups/`）→ 同步到正式目錄（不動 `.env`、`data/`、`logs/`）→ `package-lock.json` 有變才重裝套件 → PM2 reload → 健康檢查。
 
 ### 常用指令
 
 ```bash
-sudo pm2 status                 # 服務狀態
-sudo pm2 logs framevr-tracker   # 即時日誌
-nano /opt/framevr2026/.env      # 改設定後執行 sudo pm2 reload framevr-tracker --update-env
+sudo pm2 list                          # 同時看到 app（nckuchat）與 framevr-tracker
+sudo pm2 logs framevr-tracker --lines 80
+curl http://127.0.0.1:3060/framevr/api/health
 ```
 
-> 想先看後台長什麼樣：`DB_PATH=./data/demo.db npm run seed` 產生示範資料，再 `DB_PATH=./data/demo.db npm start`。
+> 想先看後台長什麼樣：在本機 `npm install` 後執行 `DB_PATH=./data/demo.db npm run seed`，再 `DB_PATH=./data/demo.db npm start`，開 `http://127.0.0.1:3060/`。
 
 ## 放進 FrameVR
 
