@@ -22,7 +22,7 @@ EMAIL="${2:-}"
 BASE_PATH="${3:-}"
 REPO_URL="${REPO_URL:-https://github.com/yongliancai/frameVR2026.git}"
 APP_DIR="${APP_DIR:-/opt/framevr2026}"
-APP_USER="${APP_USER:-${SUDO_USER:-root}}"
+APP_USER="${APP_USER:-}"
 PORT="${PORT:-3060}"
 
 if [[ -z "$DOMAIN" || -z "$EMAIL" ]]; then
@@ -37,13 +37,27 @@ if [[ -n "$BASE_PATH" ]]; then
   [[ "$BASE_PATH" =~ ^/[A-Za-z0-9._-]+$ ]] || { echo "子路徑只能是一層英數字，例如 /framevr"; exit 1; }
 fi
 PUBLIC_URL="https://$DOMAIN$BASE_PATH"
+CLOUDPANEL=0
+if command -v clpctl >/dev/null 2>&1 || [[ -d /home/clp ]]; then CLOUDPANEL=1; fi
+# CloudPanel 主機上 PM2 由 root 執行（與 nckuchat 的 app 同一個 PM2），其他主機預設為執行 sudo 的使用者
+if [[ -z "$APP_USER" ]]; then
+  if [[ "$CLOUDPANEL" == "1" ]]; then APP_USER=root; else APP_USER="${SUDO_USER:-root}"; fi
+fi
 
 step() { echo; echo "==== $* ===="; }
 
 step "1/7 安裝系統套件"
 apt-get update -y
-apt-get install -y curl git nginx build-essential python3 sqlite3 iproute2
-[[ -z "$BASE_PATH" ]] && apt-get install -y certbot python3-certbot-nginx
+apt-get install -y curl git build-essential python3 sqlite3 iproute2
+if [[ "$CLOUDPANEL" == "1" ]]; then
+  echo "偵測到 CloudPanel：沿用它的 Nginx 與 HTTPS，不另外安裝"
+  if [[ -z "$BASE_PATH" ]]; then
+    echo "!! CloudPanel 主機請用子路徑模式，或在 CloudPanel 介面新增 Reverse Proxy 網站指向 127.0.0.1:$PORT"; exit 1
+  fi
+else
+  apt-get install -y nginx
+  [[ -z "$BASE_PATH" ]] && apt-get install -y certbot python3-certbot-nginx
+fi
 
 step "2/7 安裝 Node.js 22 與 PM2"
 if ! command -v node >/dev/null || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 20 ]]; then
@@ -107,6 +121,19 @@ if [[ -n "$BASE_PATH" ]]; then
   sed -e "s#__BASE_PATH__#$BASE_PATH#g" -e "s#__PORT__#$PORT#g" "$APP_DIR/deploy/nginx-location.conf" > "$SNIPPET"
   INCLUDE_LINE="include $SNIPPET;"
 
+  if [[ "$CLOUDPANEL" == "1" ]]; then
+    # CloudPanel 的 Vhost 存在它自己的資料庫，直接改檔案會在下次介面存檔時被覆蓋，所以改由介面貼上
+    if grep -rqsF "$INCLUDE_LINE" /etc/nginx/sites-enabled/; then
+      echo "CloudPanel Vhost 已包含轉送設定"
+    else
+      NGINX_NOTE="還差最後一步（CloudPanel 介面操作）：
+  1. 登入 CloudPanel → Sites → $DOMAIN → Vhost
+  2. 在有 listen 443 的那個 server { 區塊內（例如 location / { 的上一行）貼上這一行：
+       $INCLUDE_LINE
+  3. 按 Save（CloudPanel 會自動檢查並重新載入 Nginx）
+  完成後打開 $PUBLIC_URL/ 確認"
+    fi
+  else
   # 找出 server_name 含這個網域的設定檔（優先找有 443 的）
   mapfile -t FILES < <(grep -rlsE "server_name[^;]*[[:space:]]$DOMAIN([[:space:]]|;)" /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null | xargs -r readlink -f | sort -u)
   if [[ ${#FILES[@]} -eq 0 ]]; then
@@ -127,10 +154,6 @@ if [[ -n "$BASE_PATH" ]]; then
     done
   fi
   nginx -t && systemctl reload nginx
-  if [[ -d /home/clp ]] || command -v clpctl >/dev/null 2>&1; then
-    NGINX_NOTE="${NGINX_NOTE}
-偵測到 CloudPanel：之後若在 CloudPanel 介面儲存 Vhost，手動加的行可能被覆蓋。
-請到 CloudPanel → Sites → $DOMAIN → Vhost，確認裡面有：$INCLUDE_LINE"
   fi
 else
   # ---- 子網域：新建站台 + HTTPS ----

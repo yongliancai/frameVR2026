@@ -48,11 +48,14 @@ sudo bash setup-vps.sh nckuchat.online 你的email /framevr
 
 腳本會安裝 Node.js 22 與 PM2，產生 `.env`，最後印出**後台密碼**與 **INGEST_KEY**，請記下來（也存在 `/opt/framevr2026/.env`）。
 
-**子路徑模式不會動到網站原本的內容**：它把轉送規則存成 `/etc/nginx/snippets/framevr2026.conf`，只在 nckuchat.online 的 `server { }` 區塊加一行 `include`。修改前會先備份，`nginx -t` 檢查失敗就自動還原。
+**子路徑模式不會動到網站原本的內容**：轉送規則存成 `/etc/nginx/snippets/framevr2026.conf`，網站設定裡只需要多一行 `include`。
 
-- 若網站是用 **CloudPanel** 管理：到 CloudPanel → Sites → nckuchat.online → Vhost 確認有 `include /etc/nginx/snippets/framevr2026.conf;`，沒有就手動貼進 HTTPS 的 server 區塊後按儲存。否則日後在介面上存 Vhost 時，這行可能會被覆蓋。
-- 預設使用連接埠 3060。如果 nckuchat.online 上的其他服務已經用了 3060，腳本會停下來，改用 `PORT=3070 sudo -E bash setup-vps.sh ...`。
-- 原本網站 `/framevr` 這個路徑會交給本系統處理，請確認原網站沒有用到它。
+- **CloudPanel 主機（nckuchat.online 就是）**：腳本不會直接改 Nginx 檔案，因為 CloudPanel 會在介面存檔時覆蓋它們。跑完後腳本會提示最後一步：到 CloudPanel → Sites → nckuchat.online → **Vhost**，在 `listen 443` 那個 `server {` 區塊內（例如 `location / {` 上一行）貼上 `include /etc/nginx/snippets/framevr2026.conf;`，再按 Save。
+  - PM2 會用 root 執行，跟 nckuchat 的 `app` 在同一個 PM2 裡，`sudo pm2 list` 可以同時看到 `app`（8080）和 `framevr-tracker`（3060）。
+  - 不會另外安裝 Nginx 或 Certbot，沿用 CloudPanel 的 Nginx 和 HTTPS 憑證。
+- **一般 Ubuntu 主機**：腳本會自動在網域的 `server { }` 區塊加 `include`，修改前先備份，`nginx -t` 檢查失敗就自動還原。
+- 預設使用連接埠 3060。如果已經被其他服務佔用，腳本會停下來，改用 `PORT=3070 sudo -E bash setup-vps.sh ...`。
+- 原本網站的 `/framevr` 路徑會交給本系統處理，請確認原網站沒有用到它。
 
 > repo 若設為 Private，VPS 無法直接 clone：先在 VPS 執行 `ssh-keygen -t ed25519`，把 `~/.ssh/id_ed25519.pub` 加到 GitHub repo → Settings → Deploy keys，再用
 > `REPO_URL=git@github.com:yongliancai/frameVR2026.git sudo -E bash setup-vps.sh ...`
@@ -73,9 +76,9 @@ sudo bash setup-vps.sh nckuchat.online 你的email /framevr
 ### 常用指令
 
 ```bash
-pm2 status                      # 服務狀態
-pm2 logs framevr-tracker        # 即時日誌
-nano /opt/framevr2026/.env      # 改設定後執行 pm2 reload framevr-tracker --update-env
+sudo pm2 status                 # 服務狀態
+sudo pm2 logs framevr-tracker   # 即時日誌
+nano /opt/framevr2026/.env      # 改設定後執行 sudo pm2 reload framevr-tracker --update-env
 ```
 
 > 想先看後台長什麼樣：`DB_PATH=./data/demo.db npm run seed` 產生示範資料，再 `DB_PATH=./data/demo.db npm start`。
