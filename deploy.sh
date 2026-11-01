@@ -62,6 +62,8 @@ cd "${APP_DIR}"
 LOCK_HASH="$(sha256sum package-lock.json | cut -d' ' -f1)-node$(node -v)"
 if [[ ! -d node_modules || ! -f .deploy-lock-hash || "$(cat .deploy-lock-hash)" != "${LOCK_HASH}" ]]; then
   printf '\n== Installing dependencies ==\n'
+  echo "If no prebuilt SQLite binary matches this Node version, it is compiled from source."
+  echo "That can take 2-5 minutes with no output. Please wait; do not press Ctrl+C."
   npm ci --omit=dev
   echo "${LOCK_HASH}" > .deploy-lock-hash
 fi
