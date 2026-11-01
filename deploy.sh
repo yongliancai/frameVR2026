@@ -28,6 +28,11 @@ if ! command -v rsync >/dev/null 2>&1; then
   echo "rsync is required but was not found." >&2
   exit 1
 fi
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+if [[ "${NODE_MAJOR}" -lt 20 ]]; then
+  echo "Node.js 20 or newer is required (found $(node -v))." >&2
+  exit 1
+fi
 
 printf '\n== Updating repository as %s ==\n' "${DEPLOY_USER}"
 su - "${DEPLOY_USER}" -c "git -C '${REPO_DIR}' pull --ff-only origin main"
@@ -53,7 +58,8 @@ rsync -a \
   "${REPO_DIR}/" "${APP_DIR}/"
 
 cd "${APP_DIR}"
-LOCK_HASH="$(sha256sum package-lock.json | cut -d' ' -f1)"
+# 套件版本或 Node 版本變了才重裝（原生模組 better-sqlite3 需要配合 Node 版本）
+LOCK_HASH="$(sha256sum package-lock.json | cut -d' ' -f1)-node$(node -v)"
 if [[ ! -d node_modules || ! -f .deploy-lock-hash || "$(cat .deploy-lock-hash)" != "${LOCK_HASH}" ]]; then
   printf '\n== Installing dependencies ==\n'
   npm ci --omit=dev
@@ -71,12 +77,14 @@ pm2 save >/dev/null
 
 printf '\n== Checking application health ==\n'
 for attempt in {1..10}; do
-  if curl --fail --silent --show-error "${HEALTH_URL}"; then
+  if curl --fail --silent "${HEALTH_URL}"; then
     printf '\nDeployment completed successfully.\n'
     exit 0
   fi
   if [[ "${attempt}" -lt 10 ]]; then sleep 2; fi
 done
 
-echo "Deployment ran, but the health check did not pass. Check: pm2 logs ${PM2_APP} --lines 80" >&2
+echo "Deployment ran, but the health check did not pass. Recent error log:" >&2
+pm2 logs "${PM2_APP}" --err --lines 30 --nostream >&2 || true
+echo "Full log: pm2 logs ${PM2_APP} --lines 80" >&2
 exit 1
