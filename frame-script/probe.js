@@ -6,7 +6,7 @@
 //      並記錄你點到的 3D 物件名稱，方便填寫 tracker.js 的 TARGETS 對照表。
 // =====================================================================
 const API_BASE = 'https://nckuchat.online/framevr';   // ← 你的後台網址（結尾不要加 /）
-const INGEST_KEY = '請填入 .env 的 INGEST_KEY';
+const INGEST_KEY = 'y3alntsi7hxPVs1y4tzBfZ60';
 
 (function () {
   const g = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : {});
