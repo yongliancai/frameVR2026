@@ -27,24 +27,32 @@ FrameVR（學生瀏覽器）                     你的伺服器（Nginx → PM2
 
 ## 部署到 VPS（Hostinger 等 Ubuntu 主機）
 
-### 1. 網域 DNS
-到網域的 DNS 管理（Hostinger hPanel → 網域 → DNS / Nameservers）新增一筆：
+### 1. 選擇網址
 
-| 類型 | 名稱 | 指向 | TTL |
-|---|---|---|---|
-| A | `framevr` | VPS 的 IP（hPanel → VPS → 概覽） | 預設 |
-
-完成後網址就是 `https://framevr.你的網域`。可用 `ping framevr.你的網域` 確認已指到 VPS 的 IP。
+| 掛法 | 網址範例 | 需要先做 |
+|---|---|---|
+| **子路徑（建議）** | `https://nckuchat.online/framevr/` | 不用改 DNS，沿用網站現有的 HTTPS 憑證 |
+| 獨立子網域 | `https://framevr.nckuchat.online/` | DNS 新增 A 紀錄 `framevr` → VPS 的 IP |
 
 ### 2. 首次安裝（SSH 進 VPS 執行一次）
 
 ```bash
 ssh root@VPS的IP
 curl -fsSL https://raw.githubusercontent.com/yongliancai/frameVR2026/main/deploy/setup-vps.sh -o setup-vps.sh
-sudo bash setup-vps.sh framevr.你的網域 你的email
+
+# 子路徑：
+sudo bash setup-vps.sh nckuchat.online 你的email /framevr
+# 或子網域：
+# sudo bash setup-vps.sh framevr.nckuchat.online 你的email
 ```
 
-腳本會安裝 Node.js 22、PM2、Nginx、HTTPS 憑證，產生 `.env`，最後印出**後台密碼**與 **INGEST_KEY**，請記下來（也存在 `/opt/framevr2026/.env`）。
+腳本會安裝 Node.js 22 與 PM2，產生 `.env`，最後印出**後台密碼**與 **INGEST_KEY**，請記下來（也存在 `/opt/framevr2026/.env`）。
+
+**子路徑模式不會動到網站原本的內容**：它把轉送規則存成 `/etc/nginx/snippets/framevr2026.conf`，只在 nckuchat.online 的 `server { }` 區塊加一行 `include`。修改前會先備份，`nginx -t` 檢查失敗就自動還原。
+
+- 若網站是用 **CloudPanel** 管理：到 CloudPanel → Sites → nckuchat.online → Vhost 確認有 `include /etc/nginx/snippets/framevr2026.conf;`，沒有就手動貼進 HTTPS 的 server 區塊後按儲存。否則日後在介面上存 Vhost 時，這行可能會被覆蓋。
+- 預設使用連接埠 3060。如果 nckuchat.online 上的其他服務已經用了 3060，腳本會停下來，改用 `PORT=3070 sudo -E bash setup-vps.sh ...`。
+- 原本網站 `/framevr` 這個路徑會交給本系統處理，請確認原網站沒有用到它。
 
 > repo 若設為 Private，VPS 無法直接 clone：先在 VPS 執行 `ssh-keygen -t ed25519`，把 `~/.ssh/id_ed25519.pub` 加到 GitHub repo → Settings → Deploy keys，再用
 > `REPO_URL=git@github.com:yongliancai/frameVR2026.git sudo -E bash setup-vps.sh ...`
@@ -70,7 +78,6 @@ pm2 logs framevr-tracker        # 即時日誌
 nano /opt/framevr2026/.env      # 改設定後執行 pm2 reload framevr-tracker --update-env
 ```
 
-> 若想改掛在既有網站的子路徑（例如 `https://你的網域/framevr/`），`.env` 設 `BASE_PATH=/framevr`，Nginx 改用 `deploy/nginx-location.conf`。
 > 想先看後台長什麼樣：`DB_PATH=./data/demo.db npm run seed` 產生示範資料，再 `DB_PATH=./data/demo.db npm start`。
 
 ## 放進 FrameVR
@@ -80,7 +87,7 @@ nano /opt/framevr2026/.env      # 改設定後執行 pm2 reload framevr-tracker 
 FrameVR 沒有公開 Frame Script 的完整 API 文件，所以先確認你的 Frame 裡能用哪些東西：
 
 1. Frame 側欄綠色圖示列的 `<>`（Script Editor）→ 新增 Script → 貼上 `frame-script/probe.js`
-2. 改上面的 `API_BASE`（`https://framevr.你的網域`）、`INGEST_KEY`，儲存並重新進入 Frame
+2. 改上面的 `API_BASE`（`https://nckuchat.online/framevr`）、`INGEST_KEY`，儲存並重新進入 Frame
 3. 隨意點幾個展板、模型、影片
 4. 到後台「系統」分頁看探測結果：
    - `sceneFound`、`onPointerObservable` 要是 `true`，點擊紀錄才能運作
@@ -94,7 +101,7 @@ FrameVR 沒有公開 Frame Script 的完整 API 文件，所以先確認你的 F
 
 1. 新增 Script → 貼上 `frame-script/tracker.js`
 2. 修改 `CONFIG`：
-   - `API_BASE`：`https://framevr.你的網域`（安裝腳本最後會印出）
+   - `API_BASE`：`https://nckuchat.online/framevr`（安裝腳本最後會印出）
    - `INGEST_KEY`：與 `.env` 相同
    - `FRAME_NAME`：這個空間的名稱（多個 Frame 共用同一個後台時用來區分）
    - `TARGETS`：把探測到的物件名稱對應成教材
@@ -116,7 +123,7 @@ TARGETS: [
 - **內建按鈕（預設）**：學生開啟教材時，畫面下方出現「♡ 喜歡　☆ 收藏　✕ 關閉」。需要 `BABYLON_GUI` 可用。
 - **網頁小工具（備案）**：在展板旁放一個 FrameVR「網頁瀏覽器」物件，網址填：
   ```
-  https://framevr.你的網域/widget/like.html?k=INGEST_KEY&id=board-water-cycle&name=水循環&frame=my-frame
+  https://nckuchat.online/framevr/widget/like.html?k=INGEST_KEY&id=board-water-cycle&name=水循環&frame=my-frame
   ```
   `id` 要和 TARGETS 的 `id` 一致，後台才會算在同一份教材上。小工具的事件不會被算成一次「使用」。
 

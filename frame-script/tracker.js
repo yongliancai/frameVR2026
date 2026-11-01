@@ -12,7 +12,7 @@
 // =====================================================================
 
 const CONFIG = {
-  API_BASE: 'https://framevr.你的網域',      // ← 你的後台網址（結尾不要加 /）
+  API_BASE: 'https://nckuchat.online/framevr',      // ← 你的後台網址（結尾不要加 /）
   INGEST_KEY: '請填入 .env 的 INGEST_KEY',
   FRAME_NAME: 'my-frame',                     // ← 這個 Frame 的名稱，後台可用來篩選
   ASK_ID_EVERY_TIME: true,                    // 教室共用電腦建議 true；個人裝置可改 false（記住上次學號）

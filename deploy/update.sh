@@ -26,4 +26,5 @@ pm2 save >/dev/null
 
 sleep 1
 PORT=$(grep -E '^PORT=' .env | cut -d= -f2 || echo 3060)
-curl -fsS "http://127.0.0.1:${PORT:-3060}/api/health" >/dev/null && echo "==> 更新完成，服務正常（$(git log -1 --format='%h %s')）"
+BASE_PATH=$(grep -E '^BASE_PATH=' .env | cut -d= -f2 || true)
+curl -fsS "http://127.0.0.1:${PORT:-3060}${BASE_PATH}/api/health" >/dev/null && echo "==> 更新完成，服務正常（$(git log -1 --format='%h %s')）"

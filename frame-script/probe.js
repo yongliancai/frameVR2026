@@ -5,7 +5,7 @@
 // 目的：確認 Frame Script 裡有哪些物件可用（scene、BABYLON.GUI、fetch、localStorage…），
 //      並記錄你點到的 3D 物件名稱，方便填寫 tracker.js 的 TARGETS 對照表。
 // =====================================================================
-const API_BASE = 'https://framevr.你的網域';   // ← 你的後台網址（結尾不要加 /）
+const API_BASE = 'https://nckuchat.online/framevr';   // ← 你的後台網址（結尾不要加 /）
 const INGEST_KEY = '請填入 .env 的 INGEST_KEY';
 
 (function () {
