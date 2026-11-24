@@ -92,7 +92,7 @@ curl http://127.0.0.1:3060/framevr/api/health
 後台的「**FrameVR 設定**」分頁有完整的 URL 與可一鍵複製的 Body 範本，以下是流程。
 
 ### 1. 在 FrameVR 新增 API 金鑰（只做一次）
-FrameVR 右側選單 → **PROFILE** → API Keys → 新增一把金鑰，值填伺服器 `.env` 的 `INGEST_KEY`（`sudo grep INGEST_KEY /home/nckuchat/framevr2026/.env`）。
+FrameVR 右側選單 → **PROFILE** → 捲到最下面「**API Keys for Interactivity**」→ Add New API Key，值填伺服器 `.env` 的 `INGEST_KEY`（`sudo grep INGEST_KEY /home/nckuchat/framevr2026/.env`）。
 
 ### 2. 把物件取好名字
 教材的名稱會直接成為後台的教材名稱（`%assetName%`），例如「水循環展板」「心臟模型」。可互動的物件類型：Model、Shape、Image、Text Label、Shader（影片可用封面圖片或旁邊的按鈕代替）。

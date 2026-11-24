@@ -390,6 +390,8 @@
 
   // ---------- 設定（FrameVR Action Editor） ----------
   const TEMPLATES = [
+    { key: 'auto', title: '通用設定（建議：所有物件都用這一段）', trigger: 'Click/Tap（點擊）；入口方塊用 Proximity（靠近）', note: '伺服器依物件名稱自動判斷：名稱結尾「喜歡」→ 喜歡、「收藏」→ 收藏、「入口」→ 進入、「離開／出口」→ 離開、含「按鈕」→ 互動按鈕，其他都算開啟教材（名稱含展板／模型／影片會自動分類）。',
+      body: { event: 'auto', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
     { key: 'enter', title: '進入（出生點的靠近觸發）', trigger: 'Proximity（靠近）', note: '在出生點放一個透明的大方塊，學生一進場就會觸發，記錄「進入時間」。',
       body: { event: 'enter', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
     { key: 'material', title: '開啟教材（展板／3D 模型／影片封面）', trigger: 'Click/Tap（點擊）', note: '每份教材都用同一段內容，教材名稱會自動帶入物件名稱（%assetName%），請先把物件取好名字。category 依物件改成 board、model 或 video。',
@@ -408,7 +410,7 @@
     const [probes, cfg] = await Promise.all([fetch('api/probes').then((r) => r.json()), fetch('api/config').then((r) => r.json())]);
     const base = location.origin + location.pathname.replace(/[^/]*$/, '');
     const url = base + 'api/frame-action';
-    const tpl = TEMPLATES.map((t) => `
+    const tpl = TEMPLATES.map((t, i) => (i === 1 ? '<!--SPLIT-->' : i > 1 ? '<!--SPLIT-->' : '') + `
       <div class="card">
         <div class="card-head"><div><h2>${esc(t.title)}</h2><p class="sub">觸發：${esc(t.trigger)}　${esc(t.note)}</p></div>
           <button class="btn copy" data-copy="${esc(JSON.stringify(t.body, null, 2))}">複製 Body</button></div>
@@ -422,16 +424,45 @@
             <tr><th>URL</th><td><code>${esc(url)}</code> <button class="btn copy" data-copy="${esc(url)}">複製</button></td></tr>
             <tr><th>HTTP Method</th><td><code>POST</code></td></tr>
             <tr><th>HTTP Header Name</th><td><code>X-API-Key</code></td></tr>
-            <tr><th>API Key</th><td>選你在 FrameVR「PROFILE → API Keys」新增的金鑰（值＝伺服器 .env 的 INGEST_KEY）${cfg.key_set ? '' : '　<b>⚠ 伺服器尚未設定 INGEST_KEY</b>'}</td></tr>
+            <tr><th>API Key</th><td>選你在 FrameVR「PROFILE → API Keys for Interactivity」新增的金鑰（值＝伺服器 .env 的 INGEST_KEY）${cfg.key_set ? '' : '　<b>⚠ 伺服器尚未設定 INGEST_KEY</b>'}</td></tr>
             <tr><th>POST/PUT Body</th><td>依物件用途，複製下方對應的內容</td></tr>
           </tbody></table>
           <p class="sub" style="margin-top:10px">目前設定：超過 ${cfg.session_gap_min} 分鐘沒有動作就算下一次使用；單次教材互動時間上限 ${cfg.max_material_min} 分鐘。學生第一次觸發時，FrameVR 會詢問是否同意分享名牌，請提醒學生按同意。</p>
         </div>
-        ${tpl}
+        ${tpl.split('<!--SPLIT-->')[0]}
+        <details class="card"><summary><b>進階：個別範本</b>（不想用名稱判斷時才需要）</summary>${tpl.split('<!--SPLIT-->').slice(1).join('')}</details>
+        <div class="card"><h2>Frame API 測試（唯讀）</h2>
+          <p class="sub">用 FrameVR 官方 API 讀取物件資料，確認 Action Editor 的設定（triggers）能不能被程式讀到。需要在伺服器 .env 設定 FRAME_API_KEY${cfg.frame_api_key_set ? '' : '　<b>⚠ 目前尚未設定</b>'}。物件 ID 在 FrameVR 右側選單 →「ASSETS IN THIS FRAME」。</p>
+          <div class="row" style="margin-bottom:10px">
+            <label>Frame <input id="fa-frame" value="${esc(cfg.frame_ref || '')}" placeholder="ncku2026" style="width:120px"></label>
+            <button class="btn" id="fa-read-frame">讀取 Frame 資料</button>
+          </div>
+          <div class="row" style="margin-bottom:10px">
+            <label>類型 <select id="fa-type">${(cfg.asset_types || []).map((t) => `<option>${esc(t)}</option>`).join('')}</select></label>
+            <label>物件 ID <input id="fa-id" placeholder="例如 AbC123xyz" style="width:200px"></label>
+            <button class="btn" id="fa-read-asset">讀取物件</button>
+          </div>
+          <pre class="code" id="fa-out" style="max-height:480px">尚未查詢</pre>
+        </div>
         <div class="card"><h2>最近收到的請求</h2><p class="sub">FrameVR 每次呼叫 API 的原始內容（最近 30 筆，可用來檢查設定是否正確；%變數% 沒被替換代表該欄位沒有值）</p>
           ${probes.length ? probes.map((p) => `<p class="sub" style="margin:10px 0 4px">${fmtTime(p.server_ts)}</p><pre class="code">${esc(JSON.stringify(JSON.parse(p.payload), null, 2))}</pre>`).join('') : '<div class="empty">還沒有收到任何請求。設定好後，在 Action Editor 按 Test，或進入 Frame 點一下物件。</div>'}
         </div>`,
       after() {
+        const out = $('#fa-out');
+        const show = async (url) => {
+          out.textContent = '查詢中…';
+          try {
+            const r = await fetch(url).then((x) => x.json());
+            const head = r.triggers_found && r.triggers_found.length ? '★ 找到觸發設定 ' + r.triggers_found.length + ' 處：\n' + JSON.stringify(r.triggers_found, null, 2) + '\n\n──── 完整回應 ────\n' : (r.ok ? '（回應中沒有找到 triggers / interactions 欄位）\n\n' : '');
+            out.textContent = head + JSON.stringify(r, null, 2);
+          } catch (e) { out.textContent = '查詢失敗：' + e.message; }
+        };
+        $('#fa-read-frame').addEventListener('click', () => show('api/frameapi/frame?frame=' + encodeURIComponent($('#fa-frame').value.trim())));
+        $('#fa-read-asset').addEventListener('click', () => {
+          const id = $('#fa-id').value.trim();
+          if (!id) { out.textContent = '請輸入物件 ID'; return; }
+          show('api/frameapi/asset/' + encodeURIComponent($('#fa-type').value) + '/' + encodeURIComponent(id) + '?frame=' + encodeURIComponent($('#fa-frame').value.trim()));
+        });
         view.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
           try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '已複製'; }
           catch (e) { b.textContent = '請手動選取'; }

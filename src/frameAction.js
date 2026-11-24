@@ -25,6 +25,7 @@ const SESSION_GAP_MS = Number(process.env.SESSION_GAP_MIN || 15) * 60 * 1000;
 const MAX_MATERIAL_MS = Number(process.env.MAX_MATERIAL_MIN || 10) * 60 * 1000;
 
 const EVENT_ALIASES = {
+  auto: 'auto',
   enter: 'enter', start: 'enter', join: 'enter',
   leave: 'leave', exit: 'leave', end: 'leave',
   material: 'material', open: 'material', material_open: 'material',
@@ -57,9 +58,29 @@ function resolveStudent(p) {
   return { id: 'Guest', source: 'none', user: null };
 }
 
+// event 填 auto（或不填）時，依物件名稱判斷：所有物件可以共用同一段 API Call 設定
+//   「…喜歡」→ 喜歡（教材＝名稱去掉「喜歡」）  「…收藏」→ 收藏
+//   「入口」→ 進入   「離開／出口」→ 離開   「…按鈕」→ 互動按鈕   其他 → 開啟教材
+const LIKE_RE = /[-_－—\s]*(喜歡|讚|like)$/i;
+const FAV_RE = /[-_－—\s]*(收藏|favorite|fav)$/i;
+function inferFromName(name) {
+  const n = (name || '').trim();
+  if (!n) return { action: 'click' };
+  if (LIKE_RE.test(n)) return { action: 'like', material: n.replace(LIKE_RE, '') || null };
+  if (FAV_RE.test(n)) return { action: 'favorite', material: n.replace(FAV_RE, '') || null };
+  if (/^(入口|進入|出生點|spawn|entrance|enter)/i.test(n)) return { action: 'enter' };
+  if (/^(離開|出口|結束|exit|leave)/i.test(n)) return { action: 'leave' };
+  if (/(按鈕|button|btn)/i.test(n)) return { action: 'click' };
+  return { action: 'material' };
+}
+
 function guessCategory(p) {
   const c = clean(p.category || p.type_label, 32);
   if (c && CATEGORY_ALIASES[c.toLowerCase()]) return CATEGORY_ALIASES[c.toLowerCase()];
+  const nm = clean(p.asset_name || p.assetName, 200) || '';
+  if (/(展板|海報|看板|poster|board)/i.test(nm)) return 'board';
+  if (/(模型|model)/i.test(nm)) return 'model';
+  if (/(影片|video)/i.test(nm)) return 'video';
   const t = (clean(p.asset_type || p.assetType, 32) || '').toLowerCase();
   if (t.includes('model')) return 'model';
   if (t.includes('video')) return 'video';
@@ -117,8 +138,13 @@ function closeEvent(base, open, ts, reason) {
 
 const handle = db.transaction((p, userAgent) => {
   const now = Date.now();
-  const action = EVENT_ALIASES[(clean(p.event || p.action, 32) || 'click').toLowerCase()];
+  let action = EVENT_ALIASES[(clean(p.event || p.action, 32) || 'auto').toLowerCase()];
   if (!action) return { status: 400, json: { ok: false, error: `unknown event: ${p.event}` } };
+  if (action === 'auto') {
+    const guess = inferFromName(clean(p.asset_name || p.assetName, 200));
+    action = guess.action;
+    if (guess.material && !clean(p.material, 128)) p.material = guess.material;
+  }
 
   const who = resolveStudent(p);
   const frame = clean(p.frame || p.frameName, 128);
@@ -223,4 +249,4 @@ function handleFrameAction(params, userAgent) {
   return handle(p, userAgent);
 }
 
-module.exports = { handleFrameAction, resolveStudent, clean };
+module.exports = { handleFrameAction, resolveStudent, clean, inferFromName };

@@ -6,6 +6,7 @@ const express = require('express');
 const cors = require('cors');
 const { ingest } = require('./src/ingest');
 const { handleFrameAction } = require('./src/frameAction');
+const frameApi = require('./src/frameApi');
 const stats = require('./src/stats');
 const db = require('./src/db');
 
@@ -107,7 +108,17 @@ dash.get('/api/sequences', wrap((req) => stats.sequences(req.query)));
 dash.get('/api/event-list', wrap((req) => stats.eventList(req.query)));
 dash.get('/api/frames', wrap(() => stats.frames()));
 dash.get('/api/probes', wrap(() => db.prepare('SELECT * FROM probes ORDER BY id DESC LIMIT 30').all()));
+// FrameVR 官方 API 唯讀查詢（測試能否讀到物件的 Action Editor 設定）
+const awrap = (fn) => async (req, res) => {
+  try { res.json(await fn(req)); } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
+};
+dash.get('/api/frameapi/frame', awrap((req) => frameApi.readFrame(req.query.frame)));
+dash.get('/api/frameapi/asset/:type/:id', awrap((req) => frameApi.readAsset(req.params.type, req.params.id, req.query.frame)));
+
 dash.get('/api/config', wrap(() => ({
+  frame_api_key_set: !!frameApi.config().key,
+  frame_ref: frameApi.config().frame,
+  asset_types: frameApi.ASSET_TYPES,
   session_gap_min: Number(process.env.SESSION_GAP_MIN || 15),
   max_material_min: Number(process.env.MAX_MATERIAL_MIN || 10),
   key_set: !!INGEST_KEY,
