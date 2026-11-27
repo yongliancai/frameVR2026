@@ -1,30 +1,35 @@
-# 每次 push 到 main 自動做語法檢查與啟動測試（部署仍在主機上執行 sudo ./deploy.sh）
+# 每次 push / PR 自動檢查（部署仍由人工在主機上執行 sudo ./deploy.sh）
+# Node 20 = 正式主機版本；22 = 確認升級後仍可用
 name: check
 
 on:
   push:
-    branches: [main]
+    branches: [main, engineering-setup]
   pull_request:
   workflow_dispatch:
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - name: 語法檢查
+      - name: 語法檢查與秘密掃描
+        run: npm run check
+      - name: 自動測試（含回歸、不變量、HTTP 黑箱）
+        run: npm test
+      - name: 啟動測試（與正式環境相同的 /framevr 子路徑與 Action Editor 入口）
         run: |
-          for f in server.js src/*.js public/app.js scripts/*.js; do node --check "$f"; done
-          bash -n deploy.sh
-      - name: 啟動測試（與正式環境相同的 /framevr 子路徑）
-        run: |
-          DB_PATH=/tmp/ci.db PORT=3999 BASE_PATH=/framevr node server.js &
+          DB_PATH=/tmp/ci.db PORT=3999 BASE_PATH=/framevr INGEST_KEY=ci_key_0123456789 node server.js &
           sleep 2
           curl -fsS http://127.0.0.1:3999/framevr/api/health
-          curl -fsS -XPOST http://127.0.0.1:3999/framevr/api/events -H 'Content-Type: text/plain' \
-            -d '{"events":[{"type":"session_start","student_id":"CI","session_id":"ci-1"}]}' | grep '"inserted":1'
+          curl -fsS -XPOST http://127.0.0.1:3999/framevr/api/frame-action -H 'Content-Type: application/json' -H 'X-API-Key: ci_key_0123456789' \
+            -d '{"event":"material","user":"ci","frame":"ci","asset_name":"CI Poster","asset_type":"images"}' | grep '"ok":true'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -XPOST http://127.0.0.1:3999/framevr/api/frame-action -H 'X-API-Key: wrong')" = 401

@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "check": "node scripts/check-syntax.js && node scripts/check-secrets.js",
     "seed": "node scripts/seed-demo.js"
   },
   "author": "",
