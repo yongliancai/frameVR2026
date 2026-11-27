@@ -2,3 +2,6 @@ node_modules/
 data/
 logs/
 .env
+.deploy-lock-hash
+.deployed-commit
+.previous-commit
