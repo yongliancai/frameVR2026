@@ -9,6 +9,8 @@ set -Eeuo pipefail
 #   sudo ./deploy.sh --rollback <commit>  回到指定版本
 #
 # 部署前一定會先在 checkout 目錄跑 npm test；測試失敗就停止，正式環境完全不動。
+# 整個腳本包在 main() 裡：bash 會先讀完整個函式才執行，所以 git pull 更新本檔時不會讀到一半的新內容
+main() {
 DEPLOY_USER="${DEPLOY_USER:-nckuchat}"
 REPO_DIR="${REPO_DIR:-/home/nckuchat/framevr2026-deploy}"
 APP_DIR="${APP_DIR:-/home/nckuchat/framevr2026}"
@@ -139,3 +141,6 @@ pm2 logs "${PM2_APP}" --err --lines 30 --nostream >&2 || true
 echo "Full log: pm2 logs ${PM2_APP} --lines 80" >&2
 [[ -n "${PREV_COMMIT}" ]] && echo "To return to the last working version: sudo ./deploy.sh --rollback" >&2
 exit 1
+}
+
+main "$@"
