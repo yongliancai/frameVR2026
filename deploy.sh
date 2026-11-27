@@ -11,6 +11,9 @@ set -Eeuo pipefail
 # 部署前一定會先在 checkout 目錄跑 npm test；測試失敗就停止，正式環境完全不動。
 # 整個腳本包在 main() 裡：bash 會先讀完整個函式才執行，所以 git pull 更新本檔時不會讀到一半的新內容
 main() {
+# 固定使用系統路徑（與 sudo 的 secure_path 相同），避免 root 的 nvm 等設定換成另一個 Node 版本，
+# 造成 better-sqlite3 原生模組版本不符（2026-11-28 發生過：root 直接執行時用到 Node 22，正式環境是 Node 20）
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 DEPLOY_USER="${DEPLOY_USER:-nckuchat}"
 REPO_DIR="${REPO_DIR:-/home/nckuchat/framevr2026-deploy}"
 APP_DIR="${APP_DIR:-/home/nckuchat/framevr2026}"
@@ -38,6 +41,7 @@ if ! command -v rsync >/dev/null 2>&1; then
   echo "rsync is required but was not found." >&2
   exit 1
 fi
+echo "Using Node $(node -v) at $(command -v node)"
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 if [[ "${NODE_MAJOR}" -lt 20 ]]; then
   echo "Node.js 20 or newer is required (found $(node -v))." >&2
