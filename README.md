@@ -23,7 +23,7 @@ FrameVR（學生）                                   nckuchat.online/framevr（
 | 2. 物件點擊（展板、3D 模型、影片、按鈕） | 每個物件 Click → `material` 或 `click`，`category` 標記類型 | 「點擊」分頁：前 15 名、依類型統計 |
 | 3. 教材互動歷程（開啟次數、互動時間、先後順序） | 點教材＝開啟；開啟下一份、離開或逾時＝關閉並計算時長；每筆有 `seq` | 「教材」分頁：開啟次數、平均互動、A→B 瀏覽順序、第一個開啟的教材；學生的逐筆歷程 |
 | 4. 喜好（喜歡、取消喜歡、收藏） | 教材旁的喜歡／收藏按鈕 Click → `like` / `favorite`，每按一次切換 | 教材明細「目前喜歡／收藏人數」與取消次數；學生的目前喜好 |
-| 5. 身分與工作階段 | `%nametag%`（進場輸入的固定編號）＋ `%uniqueUserId%`（核對用）；工作階段由伺服器切分 | 事件紀錄分頁、學生的工作階段分組 |
+| 5. 身分與工作階段 | `%uniqueUserId%`（FrameVR 帳號，不跳同意視窗）；選用 `%email%`。研究者只看到代號 S001…；工作階段由伺服器切分，閒置 15 分鐘自動結算 | 學生分頁、事件紀錄、管理者「帳號與學生」 |
 | 6. 透過 API 存到外部資料庫 | Action Editor「API Call」→ `POST /api/frame-action` | `data/framevr.db`，可匯出 events / sessions CSV |
 
 **估算說明**（研究報告請註明）：FrameVR 沒有提供「離開」與「持續停留」的訊號，所以
@@ -52,7 +52,7 @@ sudo su - nckuchat -c "git clone https://github.com/yongliancai/frameVR2026.git 
 sudo mkdir -p /home/nckuchat/framevr2026
 sudo cp /home/nckuchat/framevr2026-deploy/.env.example /home/nckuchat/framevr2026/.env
 node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"   # 產生 INGEST_KEY，貼進 .env
-sudo nano /home/nckuchat/framevr2026/.env        # 填 INGEST_KEY、DASHBOARD_PASS；BASE_PATH=/framevr、PORT=3060 保持不變
+sudo nano /home/nckuchat/framevr2026/.env        # 填 INGEST_KEY、ADMIN_USER、ADMIN_PASS；BASE_PATH=/framevr、PORT=3060 保持不變
 sudo chmod 600 /home/nckuchat/framevr2026/.env
 
 # 3. 第一次部署（之後每次更新也是這行）
@@ -122,7 +122,6 @@ FrameVR 右側選單 → **PROFILE** → 捲到最下面「**API Keys for Intera
 {
   "event": "material",
   "category": "board",
-  "student": "%nametag%",
   "user": "%uniqueUserId%",
   "frame": "%frameName%",
   "asset_id": "%assetId%",
@@ -150,16 +149,31 @@ FrameVR 右側選單 → **PROFILE** → 捲到最下面「**API Keys for Intera
 | 欄位 | 說明 |
 |---|---|
 | `event` | `enter` `material` `click` `like` `favorite` `unlike` `unfavorite` `leave` |
-| `student` | `%nametag%`；空白或 Guest 時改用 `user` |
+| `user` | `%uniqueUserId%`，學生識別（請學生登入 FrameVR；未登入者記為 Guest） |
+| `email` | （選用）`%email%`；FrameVR 會先詢問學生是否同意，只有管理者看得到 |
 | `user` | `%uniqueUserId%` |
 | `frame` `asset_id` `asset_name` `asset_type` | `%frameName%` `%assetId%` `%assetName%` `%assetType%` |
 | `category` | 選填：`board` `model` `video` `button`；未填依 `asset_type` 推測 |
 | `material` | 喜歡／收藏按鈕對應的教材物件名稱；未填就用學生目前開著的教材 |
 
-回應範例：`{"ok":true,"student":"S01","session_id":"…","recorded":["click","material_close","material_open"]}`
+回應範例：`{"ok":true,"student":"user:abc123","session_id":"…","recorded":["click","material_close","material_open"]}`
+
+## 後台帳號與權限
+
+| 角色 | 可以看 | 不能看 |
+|---|---|---|
+| 管理者 admin | 全部統計、FrameVR 設定、原始請求（摘要＋CSV）、帳號管理、學生 email 與帳號 ID、測試帳號標記 | — |
+| 研究者 researcher | 統計分頁、Excel／CSV 下載（學生只有代號） | 設定、原始請求、email、帳號 ID（伺服器端回 403） |
+
+第一個管理者由 `.env` 的 `ADMIN_USER` / `ADMIN_PASS` 在第一次啟動時建立；之後在「帳號與學生」新增研究者。
+
+## 研究用 Excel
+
+後台右上「下載 Excel（研究用）」依目前的日期與 Frame 篩選匯出：說明（Codebook、資料限制、分析建議）、學生摘要、學生×教材、工作階段、教材摘要、瀏覽順序、事件明細；管理者版本另有「代號對照」。
 
 ## 研究使用注意
 
-- 學生識別碼請用固定的研究編號（Nametag），不要用真實姓名；資料庫另外存 FrameVR 帳號 ID 供核對。
+- 學生以 FrameVR 帳號識別，研究者只看到代號（S001…）；代號與 email／帳號 ID 的對照只有管理者看得到。
+- 自己測試用的帳號請在「帳號與學生」勾選「測試帳號」，統計與匯出就會排除。
 - 正式施測前，先用自己的帳號走一遍，到「事件紀錄」確認每種事件都有進來。
 - 備份：`data/framevr.db` 就是全部資料，可用 `sqlite3 data/framevr.db ".backup backup.db"` 線上備份。

@@ -80,6 +80,10 @@ const upsertSession = db.prepare(`
     event_count = event_count + 1
 `);
 
+// 用 NOT EXISTS 而不是 INSERT OR IGNORE：後者即使沒插入也會消耗 AUTOINCREMENT 編號，代號會跳號
+const ensureStudentStmt = db.prepare('INSERT INTO students (student_id, first_seen) SELECT @id, @ts WHERE NOT EXISTS (SELECT 1 FROM students WHERE student_id = @id)');
+const ensureStudent = { run: (id, ts) => ensureStudentStmt.run({ id, ts }) };
+
 const ingestBatch = db.transaction((rows, userAgent) => {
   let inserted = 0;
   for (const r of rows) {
@@ -87,6 +91,7 @@ const ingestBatch = db.transaction((rows, userAgent) => {
     const info = insertEvent.run(r);
     if (info.changes === 0) continue; // 重複事件（重送）
     inserted++;
+    ensureStudent.run(r.student_id, r.ts);
     if (skip) continue;
     const isEnd = r.event_type === 'session_end';
     upsertSession.run({

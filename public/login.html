@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登入｜FrameVR 學習行為後台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+<main class="login-box card">
+  <h1>FrameVR 學習行為後台</h1>
+  <p class="sub">請用管理者給你的帳號登入</p>
+  <form id="f">
+    <label>帳號<input id="u" name="username" autocomplete="username" required></label>
+    <label>密碼<input id="p" name="password" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary" type="submit">登入</button>
+    <p id="err" class="err" role="alert" hidden></p>
+  </form>
+</main>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.hidden = true;
+  try {
+    const r = await fetch('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: document.getElementById('u').value.trim(), password: document.getElementById('p').value }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '登入失敗');
+    location.href = './';
+  } catch (x) { err.textContent = x.message; err.hidden = false; }
+});
+</script>
+</body>
+</html>

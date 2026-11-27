@@ -51,6 +51,38 @@ CREATE TABLE IF NOT EXISTS probes (
   server_ts INTEGER NOT NULL,
   payload TEXT
 );
+
+-- 學生身分：代號（S001…）依第一次出現的順序編號；email 只有管理者看得到
+CREATE TABLE IF NOT EXISTS students (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id  TEXT UNIQUE NOT NULL,      -- 與 events.student_id 相同（例如 user:<FrameVR 帳號 ID>）
+  email       TEXT,                      -- FrameVR %email%（學生同意分享時才有）
+  excluded    INTEGER NOT NULL DEFAULT 0, -- 1 = 測試帳號，統計時排除
+  note        TEXT,
+  first_seen  INTEGER
+);
+
+-- 後台帳號：admin 可看設定與管理；researcher 只看統計（學生顯示為代號）
+CREATE TABLE IF NOT EXISTS users (
+  username    TEXT PRIMARY KEY,
+  pass_hash   TEXT NOT NULL,
+  role        TEXT NOT NULL CHECK (role IN ('admin', 'researcher')),
+  disabled    INTEGER NOT NULL DEFAULT 0,
+  created_ts  INTEGER
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash  TEXT PRIMARY KEY,
+  username    TEXT NOT NULL,
+  expires_ts  INTEGER NOT NULL
+);
+`);
+
+// 舊資料庫升級：把既有事件裡的學生補進 students（依第一次出現時間編號；已存在的不變）
+db.exec(`
+INSERT INTO students (student_id, first_seen)
+SELECT student_id, MIN(ts) FROM events
+WHERE student_id NOT IN (SELECT student_id FROM students)
+GROUP BY student_id ORDER BY MIN(ts);
 `);
 
 module.exports = db;

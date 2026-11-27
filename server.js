@@ -10,12 +10,14 @@ const { logProbe } = require('./src/probes');
 const frameApi = require('./src/frameApi');
 const stats = require('./src/stats');
 const db = require('./src/db');
+const auth = require('./src/auth');
+const students = require('./src/students');
+const probes = require('./src/probes');
+const research = require('./src/research');
 
 const PORT = Number(process.env.PORT || 3060);
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, ''); // 例如 /framevr（掛在既有網域的子路徑時）
 const INGEST_KEY = process.env.INGEST_KEY || '';
-const DASH_USER = process.env.DASHBOARD_USER || '';
-const DASH_PASS = process.env.DASHBOARD_PASS || '';
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '*').split(',').map((s) => s.trim()).filter(Boolean);
 
 const app = express();
@@ -111,61 +113,117 @@ router.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() })
 // 喜歡／收藏小工具：放進 FrameVR 的「網頁瀏覽器」物件裡使用（不需後台登入）
 router.use('/widget', express.static(path.join(__dirname, 'widget'), { maxAge: '5m' }));
 
-// ---------- 後台（需登入） ----------
-function dashboardAuth(req, res, next) {
-  if (!DASH_USER || !DASH_PASS) return next();
-  const h = req.get('authorization') || '';
-  const [scheme, encoded] = h.split(' ');
-  if (scheme === 'Basic' && encoded) {
-    const [u, ...rest] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
-    if (safeEqual(u, DASH_USER) && safeEqual(rest.join(':'), DASH_PASS)) return next();
-  }
-  res.set('WWW-Authenticate', 'Basic realm="FrameVR Dashboard", charset="UTF-8"');
-  return res.status(401).send('需要登入');
-}
+// ---------- 後台（需登入；admin / researcher 兩種角色） ----------
+const bootstrapped = auth.bootstrap();
+const COOKIE_PATH = (BASE_PATH || '') + '/';
 
 const dash = express.Router();
-dash.use(dashboardAuth);
+dash.use(auth.attachUser);
+// 會改資料的請求一律要求 JSON：跨站表單送不出 application/json，可擋 CSRF
+const jsonOnly = (req, res, next) => (req.is('application/json') ? next() : res.status(415).json({ ok: false, error: 'Content-Type must be application/json' }));
+const jsonBody = express.json({ limit: '64kb' });
+
+dash.post('/api/login', jsonOnly, jsonBody, (req, res) => {
+  const r = auth.login(req.body?.username, req.body?.password, req.ip);
+  if (!r.token) return res.status(r.status).json({ ok: false, error: r.error });
+  res.set('Set-Cookie', auth.cookieHeader(r.token, req, COOKIE_PATH, auth.SESSION_DAYS * 86400));
+  res.json({ ok: true, user: r.user });
+});
+dash.post('/api/logout', (req, res) => {
+  auth.logout(req);
+  res.set('Set-Cookie', auth.cookieHeader('', req, COOKIE_PATH, 0));
+  res.json({ ok: true });
+});
+dash.get('/api/me', auth.requireLogin, (req, res) => res.json(req.user));
+
+// 回應依角色轉換學生身分（研究者只看到代號）
 const wrap = (fn) => (req, res) => {
-  try { res.json(fn(req)); } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
+  try { res.json(students.relabel(fn(req), req.user.role)); } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
 };
-dash.get('/api/overview', wrap((req) => stats.overview(req.query)));
-dash.get('/api/students', wrap((req) => stats.students(req.query)));
-dash.get('/api/students/:id', wrap((req) => stats.studentDetail(req.params.id, req.query)));
-dash.get('/api/materials', wrap((req) => stats.materials(req.query)));
-dash.get('/api/clicks', wrap((req) => stats.clicks(req.query)));
-dash.get('/api/sequences', wrap((req) => stats.sequences(req.query)));
-dash.get('/api/event-list', wrap((req) => stats.eventList(req.query)));
-dash.get('/api/frames', wrap(() => stats.frames()));
-dash.get('/api/probes', wrap(() => db.prepare('SELECT * FROM probes ORDER BY id DESC LIMIT 30').all()));
-// FrameVR 官方 API 唯讀查詢（測試能否讀到物件的 Action Editor 設定）
 const awrap = (fn) => async (req, res) => {
   try { res.json(await fn(req)); } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
 };
-dash.get('/api/frameapi/frame', awrap((req) => frameApi.readFrame(req.query.frame)));
-dash.get('/api/frameapi/asset/:type/:id', awrap((req) => frameApi.readAsset(req.params.type, req.params.id, req.query.frame)));
+const L = auth.requireLogin;
+const A = auth.requireAdmin;
 
-dash.get('/api/config', wrap(() => ({
+// 統計（所有登入者）
+dash.get('/api/overview', L, wrap((req) => stats.overview(req.query)));
+dash.get('/api/students', L, wrap((req) => stats.students(req.query)));
+dash.get('/api/students/:id', L, wrap((req) => stats.studentDetail(req.params.id, req.query)));
+dash.get('/api/materials', L, wrap((req) => stats.materials(req.query)));
+dash.get('/api/clicks', L, wrap((req) => stats.clicks(req.query)));
+dash.get('/api/sequences', L, wrap((req) => stats.sequences(req.query)));
+dash.get('/api/event-list', L, wrap((req) => stats.eventList(req.query)));
+dash.get('/api/frames', L, wrap(() => stats.frames()));
+
+const sendCsv = (res, name) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="framevr-${name}-${stamp}.csv"`);
+};
+dash.get('/api/export/:kind.csv', L, (req, res, next) => {
+  const kind = req.params.kind;
+  if (kind === 'probes') return next();
+  if (!['events', 'sessions'].includes(kind)) return res.status(404).end();
+  sendCsv(res, kind);
+  (kind === 'events' ? stats.exportEventsCsv : stats.exportSessionsCsv)(req.query, (chunk) => res.write(chunk), req.user.role);
+  res.end();
+});
+
+// 研究用 Excel（依目前篩選條件；研究者版本只有代號）
+dash.get('/api/export/research.xlsx', L, (req, res) => {
+  try {
+    const buf = research.buildWorkbook(req.query, req.user.role, {
+      gap: Number(process.env.SESSION_GAP_MIN || 15), maxMat: Number(process.env.MAX_MATERIAL_MIN || 10), dedupe: Number(process.env.DEDUPE_MS ?? 1000) / 1000,
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="framevr-research-${stamp}.xlsx"`);
+    res.send(buf);
+  } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 以下只有管理者：FrameVR 設定、原始請求、帳號、學生身分
+dash.get('/api/export/probes.csv', A, (req, res) => {
+  sendCsv(res, 'requests');
+  probes.exportCsv((chunk) => res.write(chunk), stats.csvCell, stats.iso);
+  res.end();
+});
+dash.get('/api/probes/summary', A, (req, res) => res.json(probes.summary(5)));
+dash.get('/api/frameapi/frame', A, awrap((req) => frameApi.readFrame(req.query.frame)));
+dash.get('/api/frameapi/asset/:type/:id', A, awrap((req) => frameApi.readAsset(req.params.type, req.params.id, req.query.frame)));
+dash.get('/api/config', A, (req, res) => res.json({
   frame_api_key_set: !!frameApi.config().key,
   frame_ref: frameApi.config().frame,
   asset_types: frameApi.ASSET_TYPES,
   session_gap_min: Number(process.env.SESSION_GAP_MIN || 15),
   max_material_min: Number(process.env.MAX_MATERIAL_MIN || 10),
+  dedupe_ms: Number(process.env.DEDUPE_MS ?? 1000),
+  collect_email: process.env.COLLECT_EMAIL === '1',
   key_set: !!INGEST_KEY,
-})));
-
-dash.get('/api/export/:kind.csv', (req, res) => {
-  const kind = req.params.kind;
-  if (!['events', 'sessions'].includes(kind)) return res.status(404).end();
-  const stamp = new Date().toISOString().slice(0, 10);
-  res.set('Content-Type', 'text/csv; charset=utf-8');
-  res.set('Content-Disposition', `attachment; filename="framevr-${kind}-${stamp}.csv"`);
-  (kind === 'events' ? stats.exportEventsCsv : stats.exportSessionsCsv)(req.query, (chunk) => res.write(chunk));
-  res.end();
+}));
+dash.get('/api/users', A, (req, res) => res.json(auth.listUsers()));
+dash.post('/api/users', A, jsonOnly, jsonBody, (req, res) => {
+  const r = auth.createUser(String(req.body?.username || '').trim(), req.body?.password, req.body?.role || 'researcher');
+  res.status(r.error ? 400 : 200).json(r.error ? { ok: false, error: r.error } : { ok: true });
+});
+dash.patch('/api/users/:username', A, jsonOnly, jsonBody, (req, res) => {
+  const b = req.body || {};
+  const r = auth.updateUser(req.params.username, { password: b.password || undefined, role: b.role, disabled: b.disabled }, req.user.username);
+  res.status(r.status).json(r.error ? { ok: false, error: r.error } : { ok: true });
+});
+dash.get('/api/student-ids', A, (req, res) => res.json(students.list()));
+dash.patch('/api/student-ids/:code', A, jsonOnly, jsonBody, (req, res) => {
+  const ok = students.update(req.params.code, req.body || {});
+  res.status(ok ? 200 : 404).json({ ok });
 });
 
-dash.get('/vendor/chart.umd.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'chart.js', 'dist', 'chart.umd.min.js'), { maxAge: '7d' }));
-dash.use(express.static(path.join(__dirname, 'public'), { index: 'index.html', maxAge: '5m' }));
+// 頁面：未登入一律導向登入頁；登入頁、樣式與前端程式本身不含資料
+const sendIndex = (req, res) => (req.user ? res.sendFile(path.join(__dirname, 'public', 'index.html')) : res.redirect(302, 'login.html'));
+dash.get('/', sendIndex);
+dash.get('/index.html', sendIndex);
+dash.get('/vendor/chart.umd.min.js', L, (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'chart.js', 'dist', 'chart.umd.min.js'), { maxAge: '7d' }));
+dash.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: '5m' }));
 
 router.use(dash);
 // 後台用相對路徑呼叫 API，所以 /framevr 要補成 /framevr/
@@ -186,5 +244,7 @@ setInterval(() => {
 app.listen(PORT, HOST, () => {
   console.log(`[framevr-tracker] listening on http://${HOST}:${PORT}${BASE_PATH || ''}/`);
   if (!INGEST_KEY) console.warn('[framevr-tracker] 警告：未設定 INGEST_KEY，任何人都能寫入事件');
-  if (!DASH_USER || !DASH_PASS) console.warn('[framevr-tracker] 警告：未設定 DASHBOARD_USER / DASHBOARD_PASS，後台沒有密碼保護');
+  if (bootstrapped === 'created') console.log('[framevr-tracker] 已用 .env 建立第一個管理者帳號');
+  if (bootstrapped === 'no-users') console.warn('[framevr-tracker] 警告：還沒有任何後台帳號。請在 .env 設定 ADMIN_USER / ADMIN_PASS 後重啟');
+  if (bootstrapped && bootstrapped.startsWith('bootstrap-failed')) console.warn('[framevr-tracker] 建立管理者失敗：' + bootstrapped);
 });

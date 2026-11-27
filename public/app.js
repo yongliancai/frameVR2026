@@ -13,6 +13,10 @@
 
   const state = { range: '30', from: '', to: '', frame: '', view: 'overview', charts: [], timer: null, eventsOffset: 0, eventsType: '', eventsStudent: '', studentSort: { key: 'total_ms', dir: -1 } };
   const $ = (s, el = document) => el.querySelector(s);
+  let me = { role: 'researcher' };
+  const isAdmin = () => me.role === 'admin';
+  // 學生顯示名稱：研究者看到代號；管理者看到 email（有的話）或代號
+  const who = (r) => r.student_label || r.student_id;
   const view = $('#view');
 
   // ---------- 小工具 ----------
@@ -43,8 +47,15 @@
   }
   async function api(path, extra) {
     const r = await fetch('api/' + path + query(extra), { credentials: 'same-origin' });
+    if (r.status === 401) { location.href = 'login.html'; throw new Error('請重新登入'); }
     if (!r.ok) throw new Error(path + ' ' + r.status);
     return r.json();
+  }
+  async function send(method, path, body) {
+    const r = await fetch('api/' + path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || method + ' ' + path + ' ' + r.status);
+    return j;
   }
 
   function destroyCharts() { state.charts.forEach((c) => c.destroy()); state.charts = []; }
@@ -91,6 +102,9 @@
   $('#frame').addEventListener('change', (e) => { state.frame = e.target.value; state.eventsOffset = 0; render(); });
   $('#auto').addEventListener('change', schedule);
 
+  // Excel 下載連結跟著目前的日期與 Frame 篩選
+  function syncXlsx() { const a = $('#xlsx'); if (a) a.href = 'api/export/research.xlsx' + query(); }
+
   function schedule() {
     clearInterval(state.timer);
     if ($('#auto').checked) state.timer = setInterval(() => { if ($('#drawer').hidden) render(true); }, 30000);
@@ -98,7 +112,7 @@
 
   async function loadFrames() {
     try {
-      const frames = await fetch('api/frames').then((r) => r.json());
+      const frames = await api('frames');
       const sel = $('#frame');
       sel.innerHTML = '<option value="">全部 Frame</option>' + frames.map((f) => `<option value="${esc(f.frame)}">${esc(f.frame)}（${f.sessions}）</option>`).join('');
       sel.value = state.frame;
@@ -106,10 +120,11 @@
   }
 
   // ---------- 路由 ----------
-  const VIEWS = { overview: renderOverview, students: renderStudents, materials: renderMaterials, clicks: renderClicks, events: renderEvents, system: renderSystem };
+  const VIEWS = { overview: renderOverview, students: renderStudents, materials: renderMaterials, clicks: renderClicks, events: renderEvents, system: renderSystem, admin: renderAdmin };
+  const ADMIN_VIEWS = new Set(['system', 'admin']);
   function route() {
     const v = (location.hash || '#overview').slice(1);
-    state.view = VIEWS[v] ? v : 'overview';
+    state.view = VIEWS[v] && (isAdmin() || !ADMIN_VIEWS.has(v)) ? v : 'overview';
     document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === '#' + state.view));
     render();
   }
@@ -127,6 +142,7 @@
       view.innerHTML = html.html;
       html.after && html.after();
       $('#stamp').textContent = '更新於 ' + fmtClock(Date.now());
+      syncXlsx();
     } catch (e) {
       console.error(e);
       if (token === renderToken) view.innerHTML = `<div class="card empty">讀取資料失敗：${esc(e.message)}</div>`;
@@ -154,10 +170,10 @@
         </div>
         <div class="grid g2">
           <div class="card"><h2>每日使用人數</h2><p class="sub">當天至少進入一次的學生數</p><div class="chart"><canvas id="c-students"></canvas></div></div>
-          <div class="card"><h2>每日累積使用時長</h2><p class="sub">分鐘；未正常離開者以最後一次心跳估算</p><div class="chart"><canvas id="c-minutes"></canvas></div></div>
+          <div class="card"><h2>每日累積使用時長</h2><p class="sub">分鐘；FrameVR 沒有離開訊號，閒置超過設定時間即以最後一次動作當作離開</p><div class="chart"><canvas id="c-minutes"></canvas></div></div>
         </div>
         <div class="grid g3">
-          <div class="card"><h2>互動熱度</h2><p class="sub">星期 × 時段的事件數（台灣時間，不含心跳）</p>${heatmap(d.heatmap)}</div>
+          <div class="card"><h2>互動熱度</h2><p class="sub">星期 × 時段的事件數（台灣時間）</p>${heatmap(d.heatmap)}</div>
           <div class="card"><h2>事件類型</h2><p class="sub">篩選範圍內的事件數</p><div class="chart"><canvas id="c-types"></canvas></div></div>
         </div>`,
       after() {
@@ -221,9 +237,9 @@
         <div class="card-head"><div><h2>學生使用紀錄</h2><p class="sub">${rows.length} 位學生；點一列查看工作階段與操作歷程</p></div>
           <div class="row"><a class="btn" href="api/export/sessions.csv${query()}">匯出工作階段 CSV</a></div></div>
         ${rows.length ? `<div class="table-wrap"><table>
-          <thead><tr>${th('student_id', '學生識別碼')}${th('sessions', '使用次數', 1)}${th('total_ms', '累積使用時長')}${th('avg_session_ms', '平均每次', 1)}${th('clicks', '點擊', 1)}${th('opens', '開啟教材', 1)}${th('materials', '看過教材數', 1)}${th('material_ms', '教材互動時間', 1)}${th('likes', '喜歡', 1)}${th('favorites', '收藏', 1)}${th('last_seen', '最後使用', 1)}</tr></thead>
+          <thead><tr>${th('student_id', '學生')}${th('sessions', '使用次數', 1)}${th('total_ms', '累積使用時長')}${th('avg_session_ms', '平均每次', 1)}${th('clicks', '點擊', 1)}${th('opens', '開啟教材', 1)}${th('materials', '看過教材數', 1)}${th('material_ms', '教材互動時間', 1)}${th('likes', '喜歡', 1)}${th('favorites', '收藏', 1)}${th('last_seen', '最後使用', 1)}</tr></thead>
           <tbody>${rows.map((r) => `<tr class="clickable" data-student="${esc(r.student_id)}">
-            <td>${r.online ? '<span class="dot" title="近 5 分鐘有動作"></span>' : ''}${esc(r.student_id)}</td>
+            <td>${r.online ? '<span class="dot" title="近 5 分鐘有動作"></span>' : ''}${esc(who(r))}</td>
             <td class="num">${fmtNum(r.sessions)}</td>
             <td><div class="bar-cell"><div class="bar" style="width:${Math.max(2, (r.total_ms / maxMs) * 120)}px"></div>${fmtDur(r.total_ms)}</div></td>
             <td class="num">${fmtDur(r.avg_session_ms)}</td>
@@ -250,7 +266,7 @@
     const drawer = $('#drawer'), body = $('#drawer-body');
     drawer.hidden = false;
     body.innerHTML = '<div class="empty">載入中…</div>';
-    const d = await fetch('api/students/' + encodeURIComponent(id)).then((r) => r.json());
+    const d = await api('students/' + encodeURIComponent(id));
     const total = d.sessions.reduce((s, x) => s + x.duration_ms, 0);
     const bySession = new Map();
     d.events.forEach((e) => { if (!bySession.has(e.session_id)) bySession.set(e.session_id, []); bySession.get(e.session_id).push(e); });
@@ -277,7 +293,7 @@
     }).join('');
 
     body.innerHTML = `
-      <h1 id="drawer-title">學生 ${esc(id)}</h1>
+      <h1 id="drawer-title">學生 ${esc(who(d))}</h1>${isAdmin() ? `<p class="sub">代號 ${esc(d.student_code)}・帳號 ID <code>${esc(d.student_id)}</code></p>` : ''}
       <div class="kpis" style="margin-bottom:16px">
         <div class="kpi"><div class="label">使用次數</div><div class="value">${d.sessions.length}<span class="unit">次</span></div></div>
         <div class="kpi"><div class="label">累積使用時長</div><div class="value" style="font-size:22px">${fmtDur(total)}</div></div>
@@ -347,7 +363,7 @@
             ${d.by_type.length ? `<table><thead><tr><th>類型</th><th class="num">點擊</th><th class="num">人數</th></tr></thead><tbody>${d.by_type.map((r) => `<tr><td><span class="sw" style="background:${slot(TYPE_SLOT[r.target_type] || 7)}"></span>${esc(TYPE_LABEL[r.target_type] || r.target_type)}</td><td class="num">${fmtNum(r.clicks)}</td><td class="num">${fmtNum(r.students)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">尚無點擊</div>'}
           </div>
         </div>
-        <div class="card"><h2>物件點擊明細</h2><p class="sub">類型為「其他」的是尚未加入 tracker.js TARGETS 對照表的物件，可用這裡的名稱補進去</p>
+        <div class="card"><h2>物件點擊明細</h2><p class="sub">類型依 Action Editor Body 的 category 或物件名稱判斷；「其他」代表兩者都無法判斷</p>
           ${d.top.length ? `<div class="table-wrap"><table><thead><tr><th>物件</th><th>識別碼</th><th>類型</th><th class="num">點擊</th><th class="num">人數</th></tr></thead><tbody>
           ${d.top.map((r) => `<tr><td>${esc(r.target_name)}</td><td><code>${esc(r.target_id)}</code></td><td>${esc(TYPE_LABEL[r.target_type] || r.target_type || '')}</td><td class="num">${fmtNum(r.clicks)}</td><td class="num">${fmtNum(r.students)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">尚無點擊</div>'}
         </div>`,
@@ -367,14 +383,14 @@
     const opts = Object.entries(EVENT_LABEL).map(([k, v]) => `<option value="${k}" ${state.eventsType === k ? 'selected' : ''}>${v}（${k}）</option>`).join('');
     return {
       html: `<div class="card">
-        <div class="card-head"><div><h2>事件紀錄</h2><p class="sub">共 ${fmtNum(d.total)} 筆（預設不含心跳）；時間為事件發生時間</p></div>
+        <div class="card-head"><div><h2>事件紀錄</h2><p class="sub">共 ${fmtNum(d.total)} 筆；時間為事件發生時間</p></div>
           <div class="row">
             <select id="ev-type"><option value="">全部事件</option>${opts}</select>
-            <input id="ev-student" placeholder="學生識別碼" value="${esc(state.eventsStudent)}" style="width:130px;padding:5px 8px;border:1px solid var(--ring);border-radius:8px;background:var(--surface)">
+            <input id="ev-student" placeholder="學生代號，例如 S001" value="${esc(state.eventsStudent)}" style="width:130px;padding:5px 8px;border:1px solid var(--ring);border-radius:8px;background:var(--surface)">
             <a class="btn" href="api/export/events.csv${query({ student: state.eventsStudent })}">匯出事件 CSV</a>
           </div></div>
         ${d.rows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>學生</th><th>事件</th><th>物件</th><th>類型</th><th class="num">時長</th><th class="num">順序</th><th>工作階段</th><th>Frame</th></tr></thead><tbody>
-        ${d.rows.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${esc(r.student_id)}</td><td>${esc(EVENT_LABEL[r.event_type] || r.event_type)}</td><td>${esc(r.target_name || '')}</td><td>${esc(TYPE_LABEL[r.target_type] || r.target_type || '')}</td><td class="num">${r.duration_ms ? fmtDur(r.duration_ms) : ''}</td><td class="num">${r.seq ?? ''}</td><td><code title="${esc(r.session_id)}">${esc(String(r.session_id).slice(0, 8))}</code></td><td>${esc(r.frame || '')}</td></tr>`).join('')}
+        ${d.rows.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${esc(who(r))}</td><td>${esc(EVENT_LABEL[r.event_type] || r.event_type)}</td><td>${esc(r.target_name || '')}</td><td>${esc(TYPE_LABEL[r.target_type] || r.target_type || '')}</td><td class="num">${r.duration_ms ? fmtDur(r.duration_ms) : ''}</td><td class="num">${r.seq ?? ''}</td><td><code title="${esc(r.session_id)}">${esc(String(r.session_id).slice(0, 8))}</code></td><td>${esc(r.frame || '')}</td></tr>`).join('')}
         </tbody></table></div>
         <div class="pager"><button class="btn" id="prev" ${state.eventsOffset ? '' : 'disabled'}>上一頁</button><span>${state.eventsOffset + 1}–${state.eventsOffset + d.rows.length} / ${fmtNum(d.total)}</span><button class="btn" id="next" ${state.eventsOffset + limit < d.total ? '' : 'disabled'}>下一頁</button></div>` : '<div class="empty">沒有符合的事件</div>'}
       </div>`,
@@ -389,28 +405,31 @@
   }
 
   // ---------- 設定（FrameVR Action Editor） ----------
-  const TEMPLATES = [
+  // 學生身分只用 %uniqueUserId%（不會跳出同意視窗）；開啟 COLLECT_EMAIL=1 時才加 %email%（會先詢問學生）
+  const ID_FIELDS = (cfg) => ({ user: '%uniqueUserId%', ...(cfg.collect_email ? { email: '%email%' } : {}), frame: '%frameName%' });
+  const ASSET = { asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' };
+  const TEMPLATES = (cfg) => [
     { key: 'auto', title: '通用設定（建議：所有物件都用這一段）', trigger: 'Click/Tap（點擊）；入口方塊用 Proximity（靠近）', note: '伺服器依物件名稱自動判斷：名稱結尾「喜歡」→ 喜歡、「收藏」→ 收藏、「入口」→ 進入、「離開／出口」→ 離開、含「按鈕」→ 互動按鈕，其他都算開啟教材（名稱含展板／模型／影片會自動分類）。',
-      body: { event: 'auto', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
+      body: { event: 'auto', ...ID_FIELDS(cfg), ...ASSET } },
     { key: 'enter', title: '進入（出生點的靠近觸發）', trigger: 'Proximity（靠近）', note: '在出生點放一個透明的大方塊，學生一進場就會觸發，記錄「進入時間」。',
-      body: { event: 'enter', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
-    { key: 'material', title: '開啟教材（展板／3D 模型／影片封面）', trigger: 'Click/Tap（點擊）', note: '每份教材都用同一段內容，教材名稱會自動帶入物件名稱（%assetName%），請先把物件取好名字。category 依物件改成 board、model 或 video。',
-      body: { event: 'material', category: 'board', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
-    { key: 'click', title: '互動按鈕（非教材）', trigger: 'Click/Tap（點擊）', note: '例如測驗按鈕、傳送門，只記錄點擊次數。',
-      body: { event: 'click', category: 'button', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' } },
+      body: { event: 'enter', ...ID_FIELDS(cfg), ...ASSET } },
+    { key: 'material', title: '開啟教材（展板／影片）', trigger: 'Click/Tap（點擊）', note: '教材名稱會自動帶入物件名稱（%assetName%），請先把物件取好名字。category 依物件改成 board 或 video。',
+      body: { event: 'material', category: 'board', ...ID_FIELDS(cfg), ...ASSET } },
+    { key: 'click', title: '只記點擊（3D 模型、互動按鈕）', trigger: 'Click/Tap（點擊）', note: '只記錄點擊次數，不算開啟教材。category 填 model 或 button。',
+      body: { event: 'click', category: 'model', ...ID_FIELDS(cfg), ...ASSET } },
     { key: 'like', title: '喜歡按鈕', trigger: 'Click/Tap（點擊）', note: '每按一次在「喜歡／取消喜歡」之間切換。material 填這顆按鈕對應的教材物件名稱（和教材的物件名稱完全一樣）。',
-      body: { event: 'like', material: '教材物件名稱', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_name: '%assetName%' } },
+      body: { event: 'like', material: '教材物件名稱', ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
     { key: 'favorite', title: '收藏按鈕', trigger: 'Click/Tap（點擊）', note: '每按一次在「收藏／取消收藏」之間切換，material 同上。',
-      body: { event: 'favorite', material: '教材物件名稱', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_name: '%assetName%' } },
+      body: { event: 'favorite', material: '教材物件名稱', ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
     { key: 'leave', title: '離開（選用）', trigger: 'Click/Tap 或 Proximity', note: '放在出口或「結束」按鈕上。沒有設定也沒關係，閒置超過設定時間會自動當作離開。',
-      body: { event: 'leave', student: '%nametag%', user: '%uniqueUserId%', frame: '%frameName%', asset_name: '%assetName%' } },
+      body: { event: 'leave', ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
   ];
 
   async function renderSystem() {
-    const [probes, cfg] = await Promise.all([fetch('api/probes').then((r) => r.json()), fetch('api/config').then((r) => r.json())]);
+    const [sum, cfg] = await Promise.all([api('probes/summary'), api('config')]);
     const base = location.origin + location.pathname.replace(/[^/]*$/, '');
     const url = base + 'api/frame-action';
-    const tpl = TEMPLATES.map((t, i) => (i === 1 ? '<!--SPLIT-->' : i > 1 ? '<!--SPLIT-->' : '') + `
+    const tpl = TEMPLATES(cfg).map((t, i) => (i === 1 ? '<!--SPLIT-->' : i > 1 ? '<!--SPLIT-->' : '') + `
       <div class="card">
         <div class="card-head"><div><h2>${esc(t.title)}</h2><p class="sub">觸發：${esc(t.trigger)}　${esc(t.note)}</p></div>
           <button class="btn copy" data-copy="${esc(JSON.stringify(t.body, null, 2))}">複製 Body</button></div>
@@ -427,7 +446,7 @@
             <tr><th>API Key</th><td>選你在 FrameVR「PROFILE → API Keys for Interactivity」新增的金鑰（值＝伺服器 .env 的 INGEST_KEY）${cfg.key_set ? '' : '　<b>⚠ 伺服器尚未設定 INGEST_KEY</b>'}</td></tr>
             <tr><th>POST/PUT Body</th><td>依物件用途，複製下方對應的內容</td></tr>
           </tbody></table>
-          <p class="sub" style="margin-top:10px">目前設定：超過 ${cfg.session_gap_min} 分鐘沒有動作就算下一次使用；單次教材互動時間上限 ${cfg.max_material_min} 分鐘。學生第一次觸發時，FrameVR 會詢問是否同意分享名牌，請提醒學生按同意。</p>
+          <p class="sub" style="margin-top:10px">目前設定：超過 ${cfg.session_gap_min} 分鐘沒有動作就算下一次使用；單次教材互動時間上限 ${cfg.max_material_min} 分鐘；同一人 ${cfg.dedupe_ms / 1000} 秒內重複點同一物件只算一次。學生身分用 FrameVR 帳號（請學生登入）${cfg.collect_email ? '；Body 含 %email%，學生第一次觸發時 FrameVR 會詢問是否同意分享 email' : '，不會跳出同意視窗'}。</p>
         </div>
         ${tpl.split('<!--SPLIT-->')[0]}
         <details class="card"><summary><b>進階：個別範本</b>（不想用名稱判斷時才需要）</summary>${tpl.split('<!--SPLIT-->').slice(1).join('')}</details>
@@ -444,8 +463,17 @@
           </div>
           <pre class="code" id="fa-out" style="max-height:480px">尚未查詢</pre>
         </div>
-        <div class="card"><h2>最近收到的請求</h2><p class="sub">FrameVR 每次呼叫 API 的原始內容（最近 30 筆，可用來檢查設定是否正確；%變數% 沒被替換代表該欄位沒有值）</p>
-          ${probes.length ? probes.map((p) => `<p class="sub" style="margin:10px 0 4px">${fmtTime(p.server_ts)}</p><pre class="code">${esc(JSON.stringify(JSON.parse(p.payload), null, 2))}</pre>`).join('') : '<div class="empty">還沒有收到任何請求。設定好後，在 Action Editor 按 Test，或進入 Frame 點一下物件。</div>'}
+        <div class="card"><div class="card-head"><div><h2>收到的請求</h2><p class="sub">FrameVR 每次呼叫 API 的紀錄（保留最近 ${fmtNum(sum.keep_limit)} 筆）。完整內容請匯出 CSV。</p></div>
+          <a class="btn" href="api/export/probes.csv">匯出原始請求 CSV</a></div>
+          <div class="kpis">
+            <div class="kpi"><div class="label">今天收到</div><div class="value">${fmtNum(sum.today_total)}<span class="unit">筆</span></div></div>
+            <div class="kpi"><div class="label">今天被拒絕</div><div class="value">${fmtNum(sum.today_rejected)}<span class="unit">筆</span></div></div>
+            <div class="kpi"><div class="label">最後一筆</div><div class="value" style="font-size:16px">${fmtTime(sum.last_ts)}</div></div>
+          </div>
+          ${sum.last_rejected ? `<p class="sub">最近一次被拒絕（${fmtTime(sum.last_rejected.time)}）：${esc(sum.last_rejected.rejected)}</p>` : ''}
+          ${sum.recent.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>結果</th><th>事件</th><th>物件</th><th>類型</th><th>帶到帳號</th>${cfg.collect_email ? '<th>帶到 email</th>' : ''}</tr></thead><tbody>
+            ${sum.recent.map((p) => `<tr><td>${fmtTime(p.time)}</td><td>${p.rejected ? '<b>拒絕</b>' : '接受'}</td><td>${esc(p.event || '')}</td><td>${esc(p.asset_name || '')}</td><td>${esc(p.asset_type || '')}</td><td>${p.user_set ? '✓' : '—'}</td>${cfg.collect_email ? `<td>${p.email_set ? '✓' : '—'}</td>` : ''}</tr>`).join('')}
+          </tbody></table></div>` : '<div class="empty">還沒有收到任何請求。設定好後，在 Action Editor 按 Test，或進入 Frame 點一下物件。</div>'}
         </div>`,
       after() {
         const out = $('#fa-out');
@@ -472,9 +500,70 @@
     };
   }
 
+  // ---------- 帳號與學生（管理者） ----------
+  async function renderAdmin() {
+    const [users, list] = await Promise.all([api('users'), api('student-ids')]);
+    return {
+      html: `
+        <div class="card"><h2>後台帳號</h2><p class="sub">研究者只能看統計，學生顯示為代號；管理者另可看 FrameVR 設定、原始請求與 email。</p>
+          <form class="form-row" id="new-user">
+            <label>帳號<br><input name="username" required minlength="3" autocomplete="off"></label>
+            <label>密碼（至少 10 字元）<br><input name="password" type="password" required minlength="10" autocomplete="new-password"></label>
+            <label>角色<br><select name="role"><option value="researcher">研究者</option><option value="admin">管理者</option></select></label>
+            <button class="btn primary">新增帳號</button><span class="err" id="nu-err"></span>
+          </form>
+          <div class="table-wrap"><table><thead><tr><th>帳號</th><th>角色</th><th>狀態</th><th>建立時間</th><th></th></tr></thead><tbody>
+          ${users.map((u) => `<tr><td>${esc(u.username)}${u.username === me.username ? ' <span class="pill">你</span>' : ''}</td><td>${u.role === 'admin' ? '管理者' : '研究者'}</td><td>${u.disabled ? '<span class="muted">已停用</span>' : '可使用'}</td><td>${fmtTime(u.created_ts)}</td>
+            <td class="row"><button class="btn" data-act="pw" data-u="${esc(u.username)}">重設密碼</button>${u.username === me.username ? '' : `<button class="btn" data-act="toggle" data-u="${esc(u.username)}" data-d="${u.disabled ? 0 : 1}">${u.disabled ? '啟用' : '停用'}</button>`}</td></tr>`).join('')}
+          </tbody></table></div>
+        </div>
+        <div class="card"><h2>學生身分</h2><p class="sub">代號依第一次出現的順序自動編號，研究者只看得到代號。勾選「測試帳號」的資料不會出現在統計與匯出中（資料仍保留，可隨時取消）。</p>
+          <div class="table-wrap"><table><thead><tr><th>代號</th><th>Email</th><th>FrameVR 帳號 ID</th><th class="num">事件數</th><th class="num">最後出現</th><th>測試帳號</th><th>備註</th></tr></thead><tbody>
+          ${list.map((r) => `<tr><td><b>${esc(r.code)}</b></td><td>${esc(r.email || '—')}</td><td><code>${esc(r.student_id)}</code></td><td class="num">${fmtNum(r.events)}</td><td class="num">${fmtTime(r.last_seen)}</td>
+            <td><input type="checkbox" data-code="${esc(r.code)}" ${r.excluded ? 'checked' : ''} aria-label="${esc(r.code)} 為測試帳號"></td>
+            <td><input data-note="${esc(r.code)}" value="${esc(r.note || '')}" placeholder="例如：管理者測試" style="width:160px"></td></tr>`).join('') || '<tr><td colspan="7" class="empty">還沒有學生資料</td></tr>'}
+          </tbody></table></div>
+        </div>`,
+      after() {
+        $('#new-user').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const f = new FormData(e.target);
+          try { await send('POST', 'users', Object.fromEntries(f)); render(); }
+          catch (x) { $('#nu-err').textContent = x.message; }
+        });
+        view.querySelectorAll('[data-act="pw"]').forEach((b) => b.addEventListener('click', async () => {
+          const pw = prompt('輸入 ' + b.dataset.u + ' 的新密碼（至少 10 個字元）');
+          if (!pw) return;
+          try { await send('PATCH', 'users/' + encodeURIComponent(b.dataset.u), { password: pw }); b.textContent = '已更新'; }
+          catch (x) { alert(x.message); }
+        }));
+        view.querySelectorAll('[data-act="toggle"]').forEach((b) => b.addEventListener('click', async () => {
+          try { await send('PATCH', 'users/' + encodeURIComponent(b.dataset.u), { disabled: b.dataset.d === '1' }); render(); }
+          catch (x) { alert(x.message); }
+        }));
+        view.querySelectorAll('input[data-code]').forEach((c) => c.addEventListener('change', async () => {
+          try { await send('PATCH', 'student-ids/' + encodeURIComponent(c.dataset.code), { excluded: c.checked }); }
+          catch (x) { alert(x.message); c.checked = !c.checked; }
+        }));
+        view.querySelectorAll('input[data-note]').forEach((c) => c.addEventListener('change', () => send('PATCH', 'student-ids/' + encodeURIComponent(c.dataset.note), { note: c.value }).catch((x) => alert(x.message))));
+      },
+    };
+  }
+
   // ---------- 啟動 ----------
-  setRange('30');
-  loadFrames();
-  schedule();
-  route();
+  async function boot() {
+    try {
+      const r = await fetch('api/me', { credentials: 'same-origin' });
+      if (r.status === 401) { location.href = 'login.html'; return; }
+      me = await r.json();
+    } catch (e) { /* 網路錯誤時以研究者權限顯示 */ }
+    $('#who').textContent = (me.username || '') + (isAdmin() ? '（管理者）' : '（研究者）');
+    document.querySelectorAll('#tabs [data-admin]').forEach((a) => { a.hidden = !isAdmin(); });
+    $('#logout').addEventListener('click', async () => { await fetch('api/logout', { method: 'POST' }); location.href = 'login.html'; });
+    setRange('30');
+    loadFrames();
+    schedule();
+    route();
+  }
+  boot();
 })();

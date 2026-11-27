@@ -91,3 +91,9 @@ test('R-02 同一瞬間重複觸發喜歡按鈕只切換一次（不會立刻變
   const prefs = events('r02b').filter((e) => /like/.test(e.event_type)).map((e) => e.event_type);
   assert.deepEqual(prefs, ['like']);
 });
+
+test('學生代號連續不跳號（同一位學生重複出現不消耗編號）', () => {
+  for (let i = 0; i < 5; i++) { clock.advance(5000); mat('seqA', 'P' + i); mat('seqB', 'P' + i); }
+  const ids = db.prepare('SELECT id FROM students ORDER BY id').all().map((r) => r.id);
+  assert.deepEqual(ids, ids.map((_, i) => i + 1));
+});

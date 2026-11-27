@@ -1,5 +1,6 @@
 // 後台查詢：總覽、學生、教材、點擊、順序、事件列表
 const db = require('./db');
+const studentIds = require('./students');
 
 const TZ_OFFSET_MS = Number(process.env.TZ_OFFSET_MIN ?? 480) * 60 * 1000; // 預設 UTC+8（台灣）
 // 最近幾分鐘內有動作就視為「在場上」（Action Editor 沒有心跳，只能用最後一次動作判斷）
@@ -14,7 +15,9 @@ function filters(q, alias = 'e', tsCol = 'ts') {
   if (from) { where.push(`${alias}.${tsCol} >= @from`); params.from = from; }
   if (to) { where.push(`${alias}.${tsCol} <= @to`); params.to = to; }
   if (q.frame) { where.push(`${alias}.frame = @frame`); params.frame = String(q.frame); }
-  if (q.student) { where.push(`${alias}.student_id = @student`); params.student = String(q.student); }
+  if (q.student) { where.push(`${alias}.student_id = @student`); params.student = studentIds.resolveParam(q.student); }
+  // 管理者標記為「測試帳號」的學生，統計一律排除
+  if (!q.include_excluded) where.push(`${alias}.student_id NOT IN (SELECT student_id FROM students WHERE excluded = 1)`);
   return { sql: where.length ? 'WHERE ' + where.join(' AND ') : '', and: where.length ? ' AND ' + where.join(' AND ') : '', params };
 }
 
@@ -51,7 +54,8 @@ function overview(q) {
 
   const online = db.prepare(`
     SELECT COUNT(*) n FROM sessions s
-    WHERE s.end_ts IS NULL AND s.last_ts >= @since ${q.frame ? 'AND s.frame = @frame' : ''}`)
+    WHERE s.end_ts IS NULL AND s.last_ts >= @since ${q.frame ? 'AND s.frame = @frame' : ''}
+      AND s.student_id NOT IN (SELECT student_id FROM students WHERE excluded = 1)`)
     .get({ since: now - ONLINE_WINDOW_MS, ...(q.frame ? { frame: q.frame } : {}) }).n;
 
   const daily = db.prepare(`
@@ -136,7 +140,8 @@ function students(q) {
     .sort((a, b) => b.total_ms - a.total_ms);
 }
 
-function studentDetail(id, q) {
+function studentDetail(rawId, q) {
+  const id = studentIds.resolveParam(rawId);
   const params = { id };
   const sessions = db.prepare(`
     SELECT s.*, ${DUR} AS duration_ms,
@@ -279,23 +284,30 @@ const csvCell = (v) => {
 };
 const iso = (ms) => (ms ? new Date(ms + TZ_OFFSET_MS).toISOString().replace('Z', '+08:00').replace('T', ' ').slice(0, 19) : '');
 
-function exportEventsCsv(q, write) {
+// 匯出欄位依角色：研究者只有代號；管理者另有原始帳號 ID 與 email
+const idCols = (role) => (role === 'admin' ? ['student_code', 'student_email', 'student_id'] : ['student_id']);
+
+function exportEventsCsv(q, write, role = 'researcher') {
   const ef = filters(q, 'e');
-  const cols = ['id', 'event_id', 'seq', 'student_id', 'session_id', 'frame', 'event_type', 'target_id', 'target_type', 'target_name', 'duration_ms', 'ts', 'time_local', 'server_ts', 'meta'];
-  write('﻿' + cols.join(',') + '\n'); // BOM 讓 Excel 正確顯示中文
+  const cols = ['id', 'event_id', 'seq', ...idCols(role), 'session_id', 'frame', 'event_type', 'target_id', 'target_type', 'target_name', 'duration_ms', 'ts', 'time_local', 'server_ts', 'meta'];
+  write('\ufeff' + cols.join(',') + '\n'); // BOM 讓 Excel 正確顯示中文
+  const dir = studentIds.directory();
   const stmt = db.prepare(`SELECT * FROM events e ${ef.sql} ORDER BY e.ts, e.seq`);
-  for (const r of stmt.iterate(ef.params)) {
+  for (const raw of stmt.iterate(ef.params)) {
+    const r = studentIds.relabel(raw, role, dir);
     r.time_local = iso(r.ts);
     write(cols.map((c) => csvCell(r[c])).join(',') + '\n');
   }
 }
 
-function exportSessionsCsv(q, write) {
+function exportSessionsCsv(q, write, role = 'researcher') {
   const sf = filters(q, 's', 'start_ts');
-  const cols = ['session_id', 'student_id', 'frame', 'start_local', 'end_local', 'duration_sec', 'ended_normally', 'end_reason', 'event_count', 'start_ts', 'last_ts', 'end_ts'];
-  write('﻿' + cols.join(',') + '\n');
+  const dir = studentIds.directory();
+  const cols = ['session_id', ...idCols(role), 'frame', 'start_local', 'end_local', 'duration_sec', 'ended_normally', 'end_reason', 'event_count', 'start_ts', 'last_ts', 'end_ts'];
+  write('\ufeff' + cols.join(',') + '\n');
   const stmt = db.prepare(`SELECT s.*, ${DUR} AS dur FROM sessions s ${sf.sql} ORDER BY s.start_ts`);
-  for (const r of stmt.iterate(sf.params)) {
+  for (const raw of stmt.iterate(sf.params)) {
+    const r = studentIds.relabel(raw, role, dir);
     Object.assign(r, {
       start_local: iso(r.start_ts),
       end_local: iso(r.end_ts || r.last_ts),
@@ -306,4 +318,36 @@ function exportSessionsCsv(q, write) {
   }
 }
 
-module.exports = { overview, students, studentDetail, materials, clicks, sequences, eventList, frames, exportEventsCsv, exportSessionsCsv };
+
+// ---------- 研究用資料（Excel 匯出） ----------
+// 學生 × 教材：每位學生對每份教材的開啟次數與互動秒數
+function studentMaterialMatrix(q) {
+  const ef = filters(q, 'e');
+  return db.prepare(`
+    SELECT e.student_id, e.target_id, MAX(e.target_name) AS target_name,
+           SUM(e.event_type = 'material_open') AS opens,
+           COALESCE(SUM(CASE WHEN e.event_type = 'material_close' THEN e.duration_ms END), 0) AS ms
+    FROM events e
+    WHERE e.event_type IN ('material_open', 'material_close') AND e.target_id IS NOT NULL ${ef.and}
+    GROUP BY e.student_id, e.target_id`).all(ef.params);
+}
+
+function sessionList(q) {
+  const sf = filters(q, 's', 'start_ts');
+  return db.prepare(`SELECT s.*, ${DUR} AS duration_ms FROM sessions s ${sf.sql} ORDER BY s.start_ts`).all(sf.params);
+}
+
+function eventRows(q) {
+  const ef = filters(q, 'e');
+  return db.prepare(`SELECT * FROM events e ${ef.sql} ORDER BY e.ts, e.seq`).all(ef.params);
+}
+
+function clicksByStudent(q) {
+  const ef = filters(q, 'e');
+  return db.prepare(`
+    SELECT e.student_id, COALESCE(e.target_type, 'other') AS target_type, COUNT(*) AS n
+    FROM events e WHERE e.event_type = 'click' ${ef.and}
+    GROUP BY e.student_id, 2`).all(ef.params);
+}
+
+module.exports = { currentPrefs, studentMaterialMatrix, sessionList, eventRows, clicksByStudent, csvCell, iso, overview, students, studentDetail, materials, clicks, sequences, eventList, frames, exportEventsCsv, exportSessionsCsv };

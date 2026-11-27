@@ -8,8 +8,9 @@
 // 請求內容（JSON body 或網址參數皆可），FrameVR 會自動把 %變數% 換成實際值：
 // {
 //   "event":      "enter | material | click | like | favorite | leave",
-//   "student":    "%nametag%",        學生在進場名牌輸入的固定編號
-//   "user":       "%uniqueUserId%",   FrameVR 帳號 ID（核對用）
+//   "student":    （選填）固定編號；%nametag% 會跳出同意視窗，目前不使用
+//   "user":       "%uniqueUserId%",   FrameVR 帳號 ID（學生識別；不會跳出同意視窗）
+//   "email":      "%email%",          （選填）學生的 email；FrameVR 會先詢問學生是否同意分享
 //   "frame":      "%frameName%",
 //   "asset_id":   "%assetId%",
 //   "asset_name": "%assetName%",
@@ -21,6 +22,7 @@ const crypto = require('crypto');
 const db = require('./db');
 const { ingest } = require('./ingest');
 const { logProbe } = require('./probes');
+const students = require('./students');
 
 const SESSION_GAP_MS = Number(process.env.SESSION_GAP_MIN || 15) * 60 * 1000;
 const MAX_MATERIAL_MS = Number(process.env.MAX_MATERIAL_MIN || 10) * 60 * 1000;
@@ -258,6 +260,8 @@ const handle = db.transaction((p, userAgent) => {
   }
 
   const out = events.length ? ingest({ events }, userAgent) : { json: { inserted: 0 } };
+  // 學生同意分享 email 時（Body 有 "email": "%email%"），記到學生身分表；只有管理者看得到
+  if (who.id !== 'Guest') students.setEmail(who.id, clean(p.email, 254));
   for (const e of events) recorded.push(e.type);
   return {
     status: 200,
