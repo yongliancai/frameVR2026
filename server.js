@@ -45,8 +45,23 @@ const parseAny = [
 
 function checkIngestKey(req, res, next) {
   if (!INGEST_KEY) return next();
-  const key = req.get('x-api-key') || req.query.key || req.body?.key;
-  if (key && safeEqual(String(key), INGEST_KEY)) return next();
+  // 接受 X-API-Key、Authorization: Bearer、網址 ?key=、body.key
+  const auth = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const key = String(req.get('x-api-key') || auth || req.query.key || req.body?.key || '').trim();
+  if (key && safeEqual(key, INGEST_KEY)) return next();
+  // 被拒絕的請求也記錄（不存金鑰本身），方便在後台看出是金鑰不符
+  if (req.path.endsWith('/frame-action')) {
+    try {
+      const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+      delete body.key;
+      db.prepare('INSERT INTO probes (server_ts, payload) VALUES (?, ?)').run(Date.now(), JSON.stringify({
+        _rejected: key ? '金鑰不符（FrameVR 選的 API Key 和伺服器 .env 的 INGEST_KEY 不一樣）' : '沒有帶金鑰（請確認 HTTP Header Name 填 X-API-Key 並選了 API Key）',
+        _headers_seen: Object.keys(req.headers).filter((h) => !/cookie|authorization|x-api-key/i.test(h)),
+        _key_length: key.length,
+        ...body,
+      }).slice(0, 4000));
+    } catch { /* ignore */ }
+  }
   return res.status(401).json({ ok: false, error: 'invalid api key' });
 }
 
