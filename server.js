@@ -5,7 +5,8 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { ingest } = require('./src/ingest');
-const { handleFrameAction } = require('./src/frameAction');
+const { handleFrameAction, closeIdleSessions } = require('./src/frameAction');
+const { logProbe } = require('./src/probes');
 const frameApi = require('./src/frameApi');
 const stats = require('./src/stats');
 const db = require('./src/db');
@@ -43,24 +44,37 @@ const parseAny = [
   },
 ];
 
+// 被拒絕的請求：每個 IP 每分鐘最多記錄 REJECT_LOG_PER_MIN 筆；超過 REJECT_LIMIT_PER_MIN 直接回 429
+const REJECT_LOG_PER_MIN = 10;
+const REJECT_LIMIT_PER_MIN = 60;
+const rejects = new Map();
+function countReject(ip) {
+  const now = Date.now();
+  let r = rejects.get(ip);
+  if (!r || now - r.start > 60000) { r = { start: now, n: 0 }; rejects.set(ip, r); }
+  r.n++;
+  if (rejects.size > 10000) for (const [k, v] of rejects) if (now - v.start > 60000) rejects.delete(k);
+  return r.n;
+}
+
 function checkIngestKey(req, res, next) {
   if (!INGEST_KEY) return next();
-  // 接受 X-API-Key、Authorization: Bearer、網址 ?key=、body.key
+  // 接受 X-API-Key、Authorization: Bearer、body.key；不接受網址參數（會被記進伺服器 log）
   const auth = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
-  const key = String(req.get('x-api-key') || auth || req.query.key || req.body?.key || '').trim();
+  const key = String(req.get('x-api-key') || auth || req.body?.key || '').trim();
   if (key && safeEqual(key, INGEST_KEY)) return next();
-  // 被拒絕的請求也記錄（不存金鑰本身），方便在後台看出是金鑰不符
-  if (req.path.endsWith('/frame-action')) {
-    try {
-      const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
-      delete body.key;
-      db.prepare('INSERT INTO probes (server_ts, payload) VALUES (?, ?)').run(Date.now(), JSON.stringify({
-        _rejected: key ? '金鑰不符（FrameVR 選的 API Key 和伺服器 .env 的 INGEST_KEY 不一樣）' : '沒有帶金鑰（請確認 HTTP Header Name 填 X-API-Key 並選了 API Key）',
-        _headers_seen: Object.keys(req.headers).filter((h) => !/cookie|authorization|x-api-key/i.test(h)),
-        _key_length: key.length,
-        ...body,
-      }).slice(0, 4000));
-    } catch { /* ignore */ }
+  const n = countReject(req.ip);
+  if (n > REJECT_LIMIT_PER_MIN) return res.status(429).json({ ok: false, error: 'too many invalid requests' });
+  // 被拒絕的請求也記錄（不存金鑰本身），方便看出是金鑰不符；有數量上限
+  if (req.path.endsWith('/frame-action') && n <= REJECT_LOG_PER_MIN) {
+    const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    delete body.key;
+    logProbe({
+      _rejected: key ? '金鑰不符（FrameVR 選的 API Key 和伺服器 .env 的 INGEST_KEY 不一樣）' : '沒有帶金鑰（請確認 HTTP Header Name 填 X-API-Key 並選了 API Key）',
+      _headers_seen: Object.keys(req.headers).filter((h) => !/cookie|authorization|x-api-key/i.test(h)),
+      _key_length: key.length,
+      ...body,
+    });
   }
   return res.status(401).json({ ok: false, error: 'invalid api key' });
 }
@@ -79,6 +93,7 @@ const actionCors = cors({
 });
 const frameAction = (req, res) => {
   const params = { ...(req.query || {}), ...(req.body && typeof req.body === 'object' ? req.body : {}) };
+  delete params.key;
   try {
     const out = handleFrameAction(params, req.get('user-agent'));
     res.status(out.status).json(out.json);
@@ -163,6 +178,11 @@ function safeEqual(a, b) {
 }
 
 const HOST = process.env.HOST || '127.0.0.1'; // 走 Nginx 反向代理時只聽本機
+// 每分鐘結算閒置逾時的工作階段（學生關掉 FrameVR 後不會再送請求）
+setInterval(() => {
+  try { closeIdleSessions(); } catch (e) { console.error('[idle-sweep]', e); }
+}, 60 * 1000).unref();
+
 app.listen(PORT, HOST, () => {
   console.log(`[framevr-tracker] listening on http://${HOST}:${PORT}${BASE_PATH || ''}/`);
   if (!INGEST_KEY) console.warn('[framevr-tracker] 警告：未設定 INGEST_KEY，任何人都能寫入事件');

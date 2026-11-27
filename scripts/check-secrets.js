@@ -23,6 +23,7 @@ for (const f of files) {
   try { text = fs.readFileSync(f, 'utf8'); } catch { continue; }
   if (text.includes('\u0000')) continue; // 二進位檔
   text.split('\n').forEach((line, i) => {
+    if (line.includes('secret-scan: allow')) return; // 明確標註的假值（例如 CI 測試金鑰）
     for (const r of RULES) if (r.re.test(line)) problems.push(`${f}:${i + 1}: ${r.name}`);
   });
 }

@@ -20,9 +20,12 @@
 const crypto = require('crypto');
 const db = require('./db');
 const { ingest } = require('./ingest');
+const { logProbe } = require('./probes');
 
 const SESSION_GAP_MS = Number(process.env.SESSION_GAP_MIN || 15) * 60 * 1000;
 const MAX_MATERIAL_MS = Number(process.env.MAX_MATERIAL_MIN || 10) * 60 * 1000;
+// 同一位學生在這段時間內重複觸發同一個物件只算一次（連點或 FrameVR 重複送出）
+const DEDUPE_MS = Number(process.env.DEDUPE_MS ?? 1000);
 
 const EVENT_ALIASES = {
   auto: 'auto',
@@ -98,6 +101,7 @@ const q = {
     SELECT * FROM sessions
     WHERE student_id = ? AND end_ts IS NULL AND last_ts < ?
     ORDER BY last_ts DESC LIMIT 1`),
+  allStale: db.prepare(`SELECT * FROM sessions WHERE end_ts IS NULL AND last_ts < ?`),
   maxSeq: db.prepare(`SELECT COALESCE(MAX(seq), 0) AS n FROM events WHERE session_id = ?`),
   lastMaterialEvent: db.prepare(`
     SELECT event_type, target_id, target_type, target_name, ts FROM events
@@ -112,8 +116,6 @@ const q = {
     WHERE student_id = ? AND target_id = ? AND event_type IN (?, ?)
     ORDER BY ts DESC, id DESC LIMIT 1`),
   endStale: db.prepare(`UPDATE sessions SET end_ts = last_ts, end_reason = 'timeout' WHERE session_id = ?`),
-  logRaw: db.prepare('INSERT INTO probes (server_ts, payload) VALUES (?, ?)'),
-  trimRaw: db.prepare('DELETE FROM probes WHERE id <= (SELECT id FROM probes ORDER BY id DESC LIMIT 1 OFFSET 300)'),
 };
 
 function openMaterial(sessionId) {
@@ -136,6 +138,35 @@ function closeEvent(base, open, ts, reason) {
   };
 }
 
+// 閒置逾時的工作階段：把還開著的教材補上關閉（時間算到最後一次動作），並標記結束
+function endStaleSession(stale, userAgent) {
+  const open = openMaterial(stale.session_id);
+  if (open) {
+    const n = q.maxSeq.get(stale.session_id).n;
+    ingest({ events: [{ event_id: crypto.randomUUID(), seq: n + 1, student_id: stale.student_id, frame: stale.frame, session_id: stale.session_id,
+      ...closeEvent({}, open, Math.max(stale.last_ts, open.ts), 'timeout'), meta: { reason: 'timeout', inferred: true } }] }, userAgent);
+  }
+  q.endStale.run(stale.session_id);
+}
+
+// 伺服器定期巡檢：學生關掉 FrameVR 後不再回來，也能結算最後一份教材與工作階段
+const closeIdleSessions = db.transaction(() => {
+  const stale = q.allStale.all(Date.now() - SESSION_GAP_MS);
+  for (const s of stale) endStaleSession(s, null);
+  return stale.length;
+});
+
+// 連點去重（記憶體內；單一程序，重啟後清空無妨）
+const lastAccepted = new Map();
+function isDuplicate(key, now) {
+  if (!DEDUPE_MS) return false;
+  const prev = lastAccepted.get(key);
+  if (prev !== undefined && now - prev >= 0 && now - prev < DEDUPE_MS) return true;
+  lastAccepted.set(key, now);
+  if (lastAccepted.size > 5000) for (const [k, t] of lastAccepted) if (now - t > DEDUPE_MS) lastAccepted.delete(k);
+  return false;
+}
+
 const handle = db.transaction((p, userAgent) => {
   const now = Date.now();
   let action = EVENT_ALIASES[(clean(p.event || p.action, 32) || 'auto').toLowerCase()];
@@ -147,6 +178,10 @@ const handle = db.transaction((p, userAgent) => {
   }
 
   const who = resolveStudent(p);
+  const dedupeKey = who.id + '\u0000' + (clean(p.asset_id || p.assetId, 128) || clean(p.asset_name || p.assetName, 200) || '') + '\u0000' + action;
+  if (isDuplicate(dedupeKey, now)) {
+    return { status: 200, json: { ok: true, student: who.id, id_source: who.source, recorded: [], deduplicated: true } };
+  }
   const frame = clean(p.frame || p.frameName, 128);
   const assetId = clean(p.asset_id || p.assetId, 128);
   const assetName = clean(p.asset_name || p.assetName, 200);
@@ -162,17 +197,9 @@ const handle = db.transaction((p, userAgent) => {
   let seq = 0;
   const push = (ev) => events.push({ event_id: crypto.randomUUID(), seq: ++seq, student_id: who.id, frame, ts: now, ...ev, meta: { ...meta, ...(ev.meta || {}) } });
 
-  // 1. 上一次使用已逾時：把當時還開著的教材補上關閉（時間算到最後一次動作）
+  // 1. 上一次使用已逾時（巡檢還沒處理到）：先結算
   const stale = q.staleSession.get(who.id, now - SESSION_GAP_MS);
-  if (stale) {
-    const open = openMaterial(stale.session_id);
-    if (open) {
-      const n = q.maxSeq.get(stale.session_id).n;
-      events.push({ event_id: crypto.randomUUID(), seq: n + 1, student_id: who.id, frame: stale.frame, session_id: stale.session_id,
-        ...closeEvent({}, open, Math.max(stale.last_ts, open.ts), 'timeout'), meta: { reason: 'timeout', inferred: true } });
-    }
-  }
-  const staleId = stale ? stale.session_id : null;
+  if (stale) endStaleSession(stale, userAgent);
 
   // 2. 找出或建立這次的工作階段
   let session = q.activeSession.get(who.id, now - SESSION_GAP_MS);
@@ -231,7 +258,6 @@ const handle = db.transaction((p, userAgent) => {
   }
 
   const out = events.length ? ingest({ events }, userAgent) : { json: { inserted: 0 } };
-  if (staleId) q.endStale.run(staleId); // 上一次使用標記為「閒置逾時」結束
   for (const e of events) recorded.push(e.type);
   return {
     status: 200,
@@ -242,11 +268,8 @@ const handle = db.transaction((p, userAgent) => {
 function handleFrameAction(params, userAgent) {
   const p = { ...params };
   delete p.key;
-  try {
-    q.logRaw.run(Date.now(), JSON.stringify(p).slice(0, 4000));
-    q.trimRaw.run();
-  } catch { /* 紀錄失敗不影響主流程 */ }
+  logProbe(p);
   return handle(p, userAgent);
 }
 
-module.exports = { handleFrameAction, resolveStudent, clean, inferFromName };
+module.exports = { handleFrameAction, closeIdleSessions, resolveStudent, clean, inferFromName };

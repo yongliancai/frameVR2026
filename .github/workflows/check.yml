@@ -27,7 +27,7 @@ jobs:
         run: npm test
       - name: 啟動測試（與正式環境相同的 /framevr 子路徑與 Action Editor 入口）
         run: |
-          DB_PATH=/tmp/ci.db PORT=3999 BASE_PATH=/framevr INGEST_KEY=ci_key_0123456789 node server.js &
+          DB_PATH=/tmp/ci.db PORT=3999 BASE_PATH=/framevr INGEST_KEY=ci_key_0123456789 node server.js &  # secret-scan: allow（CI 假金鑰）
           sleep 2
           curl -fsS http://127.0.0.1:3999/framevr/api/health
           curl -fsS -XPOST http://127.0.0.1:3999/framevr/api/frame-action -H 'Content-Type: application/json' -H 'X-API-Key: ci_key_0123456789' \

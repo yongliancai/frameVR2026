@@ -84,7 +84,7 @@ test('R-02 連點去重：1 秒內重複只記一次，間隔 2 秒則各記一�
   assert.equal(clicks(), 3);
 });
 
-test('R-02 去重不吃掉喜歡按鈕的快速兩下（喜歡→取消）', () => {
+test('R-02 同一瞬間重複觸發喜歡按鈕只切換一次（不會立刻變回取消）', () => {
   mat('r02b', 'Poster'); clock.advance(2000);
   call({ event: 'like', user: 'r02b', asset_name: '喜歡' });
   call({ event: 'like', user: 'r02b', asset_name: '喜歡' }); // 同一瞬間重複觸發 → 視為一次
