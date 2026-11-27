@@ -120,7 +120,7 @@
   }
 
   // ---------- 路由 ----------
-  const VIEWS = { overview: renderOverview, students: renderStudents, materials: renderMaterials, clicks: renderClicks, events: renderEvents, system: renderSystem, admin: renderAdmin };
+  const VIEWS = { overview: renderOverview, students: renderStudents, materials: renderMaterials, clicks: renderClicks, events: renderEvents, analysis: renderAnalysis, system: renderSystem, admin: renderAdmin };
   const ADMIN_VIEWS = new Set(['system', 'admin']);
   function route() {
     const v = (location.hash || '#overview').slice(1);
@@ -496,6 +496,91 @@
           catch (e) { b.textContent = '請手動選取'; }
           setTimeout(() => { b.textContent = b.dataset.copy.startsWith('{') ? '複製 Body' : '複製'; }, 1500);
         }));
+      },
+    };
+  }
+
+  // ---------- 研究分析 ----------
+  const PROFILE_SLOT = { 深度探索型: 1, 廣泛瀏覽型: 2, 專注聚焦型: 3, 淺嘗即止型: 4, 未開啟教材: 7 };
+  const LEVEL_ICON = { warn: '⚠️', attention: '🔎', info: '•' };
+  async function renderAnalysis() {
+    const d = await api('analysis');
+    const cat = Object.fromEntries(d.categories.map((c) => [c.key, c]));
+    const head = (k) => `<h2>${esc(cat[k].title)}</h2><p class="sub"><b>研究問題：</b>${esc(cat[k].question)}</p>
+      <details class="method"><summary>建議分析方法與指標</summary><p>${esc(cat[k].methods)}</p><p class="muted">指標：${esc(cat[k].indicators)}</p></details>`;
+    const sum = d.summary;
+    const n = (v, u = '') => (v == null ? '—' : fmtNum(v) + u);
+    const zBg = (c) => (c.z == null || c.freq === 0 ? '' : c.significant ? `background:color-mix(in srgb, var(--accent) ${Math.min(80, 20 + c.z * 10)}%, transparent)` : c.z < -d.config.zCritical ? 'color:var(--muted)' : '');
+    const codes = d.lsa.codes.map((c) => c.code);
+    const cell = (a, b) => d.lsa.cells.find((c) => c.from === a && c.to === b);
+    const profiles = Object.entries(d.profiles.counts);
+    return {
+      html: `
+        <div class="card"><h2>自動觀察</h2><p class="sub">依目前篩選範圍的資料自動產生（描述性，不代表因果）。研究用的完整數據請按右上「下載 Excel（研究用）」。</p>
+          <ul class="obs">${d.observations.map((o) => `<li class="obs-${o.level}"><span aria-hidden="true">${LEVEL_ICON[o.level] || '•'}</span> ${o.category ? `<span class="pill">${esc(cat[o.category].title.split(' ')[0])}</span> ` : ''}${esc(o.text)}</li>`).join('')}</ul>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><div class="label">學生數</div><div class="value">${n(sum.students)}<span class="unit">人</span></div></div>
+          <div class="kpi"><div class="label">被開啟過的教材</div><div class="value">${n(sum.materials)}<span class="unit">份</span></div></div>
+          <div class="kpi"><div class="label">使用時長中位數</div><div class="value">${n(sum.median_total_min)}<span class="unit">分鐘</span></div></div>
+          <div class="kpi"><div class="label">%DV（看過一半以上教材）</div><div class="value">${n(sum.diligent_pct)}<span class="unit">%</span></div></div>
+          <div class="kpi"><div class="label">行為轉移數（LSA）</div><div class="value">${n(d.lsa.N)}<span class="unit">筆</span></div></div>
+        </div>
+
+        <div class="card">${head('A')}
+          ${d.engagement.length ? `<div class="table-wrap"><table><thead><tr><th>學生</th><th class="num">使用次數</th><th class="num">活躍天數</th><th class="num">總時長(分)</th><th class="num">看過教材</th><th class="num">廣度</th><th class="num">深度(秒)</th><th class="num">回訪</th><th class="num">瞥過比例</th><th>類型</th></tr></thead><tbody>
+          ${d.engagement.map((r) => `<tr><td>${esc(who(r))}</td><td class="num">${r.sessions}</td><td class="num">${r.active_days}</td><td class="num">${n(r.total_min)}</td><td class="num">${r.breadth_n}</td><td class="num">${n(r.breadth_pct, '%')}</td><td class="num">${n(r.depth_s)}</td><td class="num">${r.revisits}</td><td class="num">${n(r.glance_pct, '%')}</td>
+            <td>${r.profile ? `<span class="sw" style="background:${slot(PROFILE_SLOT[r.profile] ?? 7)}"></span>${esc(r.profile)}` : '<span class="muted">未分型</span>'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">此範圍沒有資料</div>'}
+        </div>
+
+        <div class="grid g2">
+          <div class="card">${head('B')}<div class="chart"><canvas id="c-eff"></canvas></div><p class="sub">橫軸：吸引力（開啟過的學生 %）；縱軸：平均停留秒數。右上 = 吸引人也留得住；右下 = 很多人開但很快離開。</p></div>
+          <div class="card">${head('C')}
+            ${d.profiles.available ? `<div class="chart"><canvas id="c-prof"></canvas></div><p class="sub">中位數：廣度 ${n(d.profiles.median_breadth_pct, '%')}、深度 ${n(d.profiles.median_depth_s, ' 秒')}</p>` : `<div class="empty">開過教材的學生少於 ${d.profiles.min_n} 人，暫不分型</div>`}
+            <ul class="legend-list">${profiles.map(([k, v]) => `<li><span class="sw" style="background:${slot(PROFILE_SLOT[k] ?? 7)}"></span><b>${esc(k)}</b> ${v} 人 <span class="muted">— ${esc(d.profiles.descriptions[k])}</span></li>`).join('')}</ul>
+          </div>
+        </div>
+
+        <div class="card"><h2 class="sr-only">B. 教材效能明細</h2><p class="sub"><b>教材效能明細</b>（瞥過 = 停留少於 ${d.config.glanceSec} 秒）</p>
+          ${d.materials.length ? `<div class="table-wrap"><table><thead><tr><th>教材</th><th class="num">開啟人數</th><th class="num">吸引力</th><th class="num">平均停留(秒)</th><th class="num">中位停留(秒)</th><th class="num">瞥過率</th><th class="num">回訪率</th><th class="num">首選次數</th><th class="num">喜歡率</th><th class="num">收藏率</th></tr></thead><tbody>
+          ${d.materials.map((m) => `<tr><td>${esc(m.name)}</td><td class="num">${m.students}</td><td class="num">${n(m.attraction_pct, '%')}</td><td class="num">${n(m.holding_mean_s)}</td><td class="num">${n(m.holding_median_s)}</td><td class="num">${n(m.glance_pct, '%')}</td><td class="num">${n(m.revisit_pct, '%')}</td><td class="num">${m.first_picks}</td><td class="num">${n(m.liked_pct, '%')}</td><td class="num">${n(m.favorited_pct, '%')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">此範圍沒有教材互動</div>'}
+        </div>
+
+        <div class="card">${head('D')}
+          ${d.lsa.N ? `${d.lsa.enough ? '' : `<p class="warnline">⚠️ 轉移只有 ${d.lsa.N} 筆（建議至少 ${d.config.minLsaN} 筆），結果僅供參考。</p>`}
+          <div class="grid g2">
+            <div><p class="sub"><b>顯著的行為轉移</b>（Z &gt; ${d.config.zCritical}，p &lt; .05）</p>
+              ${d.lsa.significant.length ? `<div class="table-wrap"><table><thead><tr><th>前一個行為</th><th></th><th>後一個行為</th><th class="num">次數</th><th class="num">Z</th></tr></thead><tbody>
+              ${d.lsa.significant.slice(0, 15).map((c) => `<tr><td>${esc(d.codes[c.from])}</td><td>→</td><td>${esc(d.codes[c.to])}</td><td class="num">${c.freq}</td><td class="num"><b>${c.z}</b></td></tr>`).join('')}</tbody></table></div>
+              ${d.lsa.significant.length > 15 ? `<p class="sub">共 ${d.lsa.significant.length} 個顯著轉移，這裡列出 Z 最大的 15 個；完整清單在 Excel「D-LSA轉移清單」。</p>` : ''}` : '<div class="empty">目前沒有顯著的轉移</div>'}</div>
+            <div><p class="sub"><b>調整後殘差 Z 矩陣</b>（列 = 前一個行為，欄 = 後一個行為；藍色越深越顯著）</p>
+              <div class="table-wrap"><table class="zmat"><thead><tr><th></th>${codes.map((c) => `<th title="${esc(d.codes[c])}">${c}</th>`).join('')}</tr></thead><tbody>
+              ${codes.map((a) => `<tr><th title="${esc(d.codes[a])}">${a}</th>${codes.map((b) => { const c = cell(a, b); return `<td class="num" style="${zBg(c)}" title="${esc(d.codes[a])} → ${esc(d.codes[b])}：${c.freq} 次，期望 ${c.expected}">${c.z == null ? '' : c.z}</td>`; }).join('')}</tr>`).join('')}
+              </tbody></table></div>
+              <p class="sub">${d.lsa.codes.map((c) => `${c.code} ${esc(c.label)}`).join('、')}</p></div>
+          </div>` : '<div class="empty">此範圍還沒有行為轉移</div>'}
+        </div>
+
+        <div class="grid g2">
+          <div class="card">${head('E')}<div class="chart"><canvas id="c-len"></canvas></div><p class="sub">每次使用的時長分組（次數）</p></div>
+          <div class="card"><h2>E. 首選教材</h2><p class="sub">每次使用時第一個開啟的教材</p>
+            ${d.usage.first_picks.length ? `<div class="table-wrap"><table><thead><tr><th>教材</th><th class="num">次數</th></tr></thead><tbody>${d.usage.first_picks.map((f) => `<tr><td>${esc(f.name)}</td><td class="num">${f.first_picks}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">尚無資料</div>'}</div>
+        </div>
+
+        <div class="card"><h2>參考文獻</h2><ul class="refs">${d.references.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></div>`,
+      after() {
+        const mats = d.materials.filter((m) => m.holding_mean_s != null);
+        if (mats.length) {
+          makeChart($('#c-eff'), { type: 'scatter', data: { datasets: [{ data: mats.map((m) => ({ x: m.attraction_pct, y: m.holding_mean_s, name: m.name })), backgroundColor: slot(1), pointRadius: 6, pointHoverRadius: 8, clip: 10 }] },
+            options: { scales: { x: { ...axisY('吸引力 %'), min: 0, max: 100 }, y: axisY('平均停留（秒）') }, plugins: { tooltip: { callbacks: { label: (i) => `${i.raw.name}：${i.raw.x}%、${i.raw.y} 秒` } } } } });
+        } else $('#c-eff').parentElement.innerHTML = '<div class="empty">尚無教材停留資料</div>';
+        if (d.profiles.available) {
+          const groups = Object.keys(PROFILE_SLOT).filter((k) => k !== '未開啟教材');
+          makeChart($('#c-prof'), { type: 'scatter', data: { datasets: groups.map((g) => ({ label: g, data: d.engagement.filter((r) => r.profile === g).map((r) => ({ x: r.breadth_pct, y: r.depth_s ?? 0, name: who(r) })), backgroundColor: slot(PROFILE_SLOT[g]), pointRadius: 6, clip: 10 })) },
+            options: { scales: { x: { ...axisY('教材廣度 %'), min: 0, max: 100 }, y: axisY('教材深度（秒）') }, plugins: { legend: { display: true, position: 'bottom' }, tooltip: { callbacks: { label: (i) => `${i.raw.name}（${i.dataset.label}）：${i.raw.x}%、${i.raw.y} 秒` } } } } });
+        }
+        makeChart($('#c-len'), { type: 'bar', data: { labels: d.usage.length_bins.map((b) => b.label), datasets: [{ data: d.usage.length_bins.map((b) => b.count), backgroundColor: slot(1), borderRadius: 4 }] },
+          options: { scales: { x: axisX(), y: axisY('次數') } } });
       },
     };
   }

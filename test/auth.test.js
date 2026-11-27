@@ -71,7 +71,7 @@ test('管理者可以使用管理功能', async () => {
 
 test('研究者只看到代號：回應與 CSV 都沒有帳號 ID 或 email', async () => {
   const { cookie } = await login(RES);
-  for (const p of ['/api/students', '/api/event-list', '/api/overview', '/api/export/events.csv', '/api/export/sessions.csv']) {
+  for (const p of ['/api/students', '/api/event-list', '/api/overview', '/api/analysis', '/api/export/events.csv', '/api/export/sessions.csv']) {
     const text = await (await get(p, cookie)).text();
     assert.doesNotMatch(text, /acct-|user:|@gmail/, p + ' 洩漏了身分');
   }

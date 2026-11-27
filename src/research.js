@@ -2,6 +2,7 @@
 const stats = require('./stats');
 const studentIds = require('./students');
 const xlsx = require('./xlsx');
+const analysis = require('./analysis');
 
 const TYPE = { board: '展板', model: '3D 模型', video: '影片', button: '互動按鈕', material: '教材', other: '其他' };
 const EVENT = {
@@ -42,6 +43,19 @@ function codebook(q, role, cfg) {
     ['資料限制', '只有點擊才會被記錄', '學生走近、觀看但沒有點擊的教材不會被記錄'],
     ['資料限制', '進入時間', '若出生點沒有設定靠近觸發，進入時間＝第一次點擊時間'],
 
+    ...analysis.CATEGORIES.map((c) => ['分析分類', c.title, `研究問題：${c.question}\n建議方法：${c.methods}\n指標：${c.indicators}`]),
+    ['指標定義', '教材廣度 %', '看過的不同教材數 ÷ 範圍內被開啟過的教材總數'],
+    ['指標定義', '教材深度（秒）', '每次開啟教材的平均停留秒數'],
+    ['指標定義', '回訪次數', '開啟次數 − 看過的不同教材數（同一份教材再回去看）'],
+    ['指標定義', '瞥過比例 %', `停留少於 ${analysis.CONFIG.glanceSec} 秒的開啟所佔比例`],
+    ['指標定義', '吸引力 %', '開啟過該教材的學生 ÷ 範圍內所有學生（attracting power）'],
+    ['指標定義', '停留力', '該教材每次開啟的平均／中位停留秒數（holding power）'],
+    ['指標定義', '%DV', '看過超過一半教材的學生比例（percentage of diligent visitors；Serrell 1998）'],
+    ['指標定義', '學習者類型', `開過教材的學生達 ${analysis.CONFIG.minProfileN} 人以上時，以「廣度 %」與「深度」的中位數切成四型；剛好等於中位數歸為「高」`],
+    ['指標定義', 'LSA 調整後殘差 Z', 'Z = (實際次數 − 期望次數) ÷ √(期望次數 × (1 − 列總和/N) × (1 − 欄總和/N))；期望次數 = 列總和 × 欄總和 ÷ N；Z > 1.96 表示該轉移顯著多於隨機（p < .05）'],
+    ...Object.entries(analysis.CODES).map(([k, v]) => ['LSA 行為編碼', k, v + (k === 'OM' ? '（展板／圖片教材）' : '')]),
+    ['LSA 行為編碼', '不編碼', '「關閉教材」是系統推算的事件；點展板／影片與「開啟教材」重複，因此都不編碼'],
+    ...analysis.REFERENCES.map((r) => ['參考文獻', '', r]),
     ['分析建議', '描述統計', '學生摘要：使用次數、總時長、看過教材數的平均數、標準差、分布（時長通常右偏，可取對數或用中位數）'],
     ['分析建議', '教材比較', '教材摘要：開啟人數比例（觸及率）×平均互動秒數，找出「很多人開但很快離開」的教材'],
     ['分析建議', '學習型態分群', '學生×教材：以互動秒數做 K-means 或階層式集群（先標準化），比較各群的學習成效'],
@@ -104,8 +118,28 @@ function buildWorkbook(q, role, cfg) {
   const events = stats.eventRows(q).map((e) => [t(e.ts), label(e.student_id), e.session_id, e.seq, EVENT[e.event_type] || e.event_type, e.event_type,
     e.target_name || e.target_id, TYPE[e.target_type] || e.target_type, sec(e.duration_ms), e.frame]);
 
+  const A = analysis.analyze(q);
+  const engRows = A.engagement.map((r) => [label(r.student_id), r.sessions, r.active_days, r.total_min, r.opens, r.breadth_n, r.breadth_pct, r.depth_s, r.revisits, r.glance_pct,
+    r.clicks_model, r.clicks_button, r.liked, r.favorited, r.profile || '（樣本不足，未分型）']).sort(sorter);
+  const effRows = A.materials.map((m) => [m.name, TYPE[m.type] || m.type, m.students, m.opens, m.attraction_pct, m.holding_mean_s, m.holding_median_s, m.glance_pct, m.revisit_pct, m.first_picks, m.liked_pct, m.favorited_pct]);
+  const codes = A.lsa.codes.map((c) => c.code);
+  const cell = (a, b) => A.lsa.cells.find((c) => c.from === a && c.to === b);
+  const lsaFreq = codes.map((a) => [`${a} ${analysis.CODES[a]}`, ...codes.map((b) => cell(a, b).freq)]);
+  const lsaZ = codes.map((a) => [`${a} ${analysis.CODES[a]}`, ...codes.map((b) => { const c = cell(a, b); return c.z == null ? null : c.z; })]);
+  const lsaSig = A.lsa.cells.filter((c) => c.freq > 0).sort((x, y) => (y.z ?? -99) - (x.z ?? -99))
+    .map((c) => [`${c.from} ${analysis.CODES[c.from]}`, `${c.to} ${analysis.CODES[c.to]}`, c.freq, c.expected, c.z, c.significant ? '顯著' : '']);
+  const codeCols = [{ header: '前一個行為 ＼ 後一個行為', width: 22 }, ...codes.map((c) => ({ header: `${c} ${analysis.CODES[c]}`, width: 12 }))];
+
   const sheets = [
     codebook(q, role, cfg),
+    { name: '研究觀察', columns: [{ header: '分類', width: 10 }, { header: '觀察（自動產生，描述性）', width: 110, wrap: true }],
+      rows: A.observations.map((o) => [o.category ? analysis.CATEGORIES.find((c) => c.key === o.category).title : (o.level === 'warn' ? '樣本提醒' : ''), o.text]) },
+    { name: 'A參與度與C類型', columns: ['學生代號', '使用次數', '活躍天數', '總使用時長(分)', '教材開啟次數', '看過教材數', '教材廣度%', '教材深度(秒)', '回訪次數', '瞥過比例%',
+      '點擊-3D模型', '點擊-按鈕', '喜歡(目前)', '收藏(目前)', '學習者類型'].map((h) => ({ header: h, width: h === '學習者類型' ? 18 : 13 })), rows: engRows },
+    { name: 'B教材效能', columns: ['教材', '類型', '開啟人數', '開啟次數', '吸引力%', '平均停留(秒)', '中位停留(秒)', '瞥過率%', '回訪率%', '首選次數', '喜歡率%', '收藏率%'].map((h, i) => ({ header: h, width: i === 0 ? 30 : 13 })), rows: effRows },
+    { name: 'D-LSA轉移次數', columns: codeCols, rows: lsaFreq },
+    { name: 'D-LSA調整後殘差Z', columns: codeCols, rows: lsaZ },
+    { name: 'D-LSA轉移清單', columns: [{ header: '前一個行為', width: 18 }, { header: '後一個行為', width: 18 }, { header: '實際次數' }, { header: '期望次數' }, { header: 'Z 值' }, { header: `Z > ${analysis.CONFIG.zCritical}` }], rows: lsaSig },
     { name: '學生摘要', columns: ['學生代號', '使用次數', '總使用時長(分)', '平均每次(分)', '第一次使用', '最後使用', '點擊次數', '點擊-展板', '點擊-3D模型', '點擊-影片', '點擊-按鈕',
       '教材開啟次數', '看過教材數', '教材互動秒數', '喜歡(目前)', '收藏(目前)'].map((h) => ({ header: h, width: /使用$/.test(h) ? 20 : 13 })), rows: studentRows },
     { name: '學生×教材', columns: [{ header: '學生代號' }, ...mats.flatMap(([, n]) => [{ header: n + '｜開啟次數', width: 18 }, { header: n + '｜互動秒數', width: 18 }])], rows: matrixRows },

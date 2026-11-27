@@ -139,3 +139,18 @@ table th { white-space: nowrap; }
 .form-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 8px 0 12px; }
 .form-row input, .form-row select { padding: 6px 8px; font: inherit; border: 1px solid var(--axis); border-radius: 6px; background: var(--surface); color: var(--ink); }
 .muted { color: var(--muted); }
+
+/* ---------- 研究分析 ---------- */
+.obs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.obs li { line-height: 1.5; }
+.obs-attention { color: var(--ink); }
+.obs-warn { color: #b0601a; }
+details.method { margin: -4px 0 12px; font-size: 13px; }
+details.method summary { cursor: pointer; color: var(--accent); }
+details.method p { margin: 6px 0 0; line-height: 1.55; }
+.legend-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; font-size: 13px; }
+.zmat th, .zmat td { padding: 4px 6px; text-align: center; font-size: 12px; }
+.warnline { color: #b0601a; font-size: 13px; margin: 0 0 8px; }
+.refs { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.grid > * { min-width: 0; }

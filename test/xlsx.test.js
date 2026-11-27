@@ -53,14 +53,14 @@ async function download(user, pass) {
   return { files: unzip(Buffer.from(await r.arrayBuffer())), cookie };
 }
 
-test('管理者下載：8 張工作表，含代號對照', async () => {
+test('管理者下載：14 張工作表，含代號對照', async () => {
   const { files, cookie } = await download('admin', 'admin-password-123');
   const wb = files['xl/workbook.xml'];
-  for (const name of ['說明', '學生摘要', '學生×教材', '工作階段', '教材摘要', '瀏覽順序', '事件明細', '代號對照']) assert.ok(wb.includes(`name="${name}"`), name);
-  assert.ok(files['xl/worksheets/sheet8.xml'].includes('acct-1@gmail.com'));
+  for (const name of ['說明', '研究觀察', 'A參與度與C類型', 'B教材效能', 'D-LSA轉移次數', 'D-LSA調整後殘差Z', 'D-LSA轉移清單', '學生摘要', '學生×教材', '工作階段', '教材摘要', '瀏覽順序', '事件明細', '代號對照']) assert.ok(wb.includes(`name="${name}"`), name);
+  assert.ok(files['xl/worksheets/sheet14.xml'].includes('acct-1@gmail.com'));
   // 學生摘要有兩位學生（S001、S002），學生×教材有兩份教材各兩欄
-  assert.ok(files['xl/worksheets/sheet2.xml'].includes('>S001<') && files['xl/worksheets/sheet2.xml'].includes('>S002<'));
-  assert.ok(files['xl/worksheets/sheet3.xml'].includes('Poster A｜互動秒數'));
+  assert.ok(files['xl/worksheets/sheet8.xml'].includes('>S001<') && files['xl/worksheets/sheet8.xml'].includes('>S002<'));
+  assert.ok(files['xl/worksheets/sheet9.xml'].includes('Poster A｜互動秒數'));
   // 建立研究者帳號供下一個測試使用
   await fetch(srv.base + '/api/users', { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'res', password: 'research-pass-456', role: 'researcher' }) });
 });
@@ -71,5 +71,5 @@ test('研究者下載：沒有代號對照表，也沒有 email 或帳號 ID', a
   const all = Object.values(files).join('');
   assert.doesNotMatch(all, /acct-|user:|@gmail/);
   // 瀏覽順序：A→B 與 B→A 各一次，轉移機率 1
-  assert.ok(files['xl/worksheets/sheet6.xml'].includes('<v>1</v>'));
+  assert.ok(files['xl/worksheets/sheet12.xml'].includes('<v>1</v>'));
 });

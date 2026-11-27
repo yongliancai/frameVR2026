@@ -22,6 +22,7 @@ server.js ── checkIngestKey ──> src/frameAction.js  推算工作階段�
         └── 後台 /framevr/  (src/auth.js 登入，admin / researcher)
                ├─ src/stats.js     統計查詢（自動排除測試帳號）
                ├─ src/students.js  身分轉換：研究者只看到代號 S001…
+               ├─ src/analysis.js  研究分析 A–E（參與度、教材效能、學習者類型、LSA、使用模式）
                ├─ src/research.js  研究用 Excel（src/xlsx.js 產生 .xlsx）
                └─ public/          原生 JS 後台（app.js、login.html）
 SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持 1）
@@ -31,7 +32,7 @@ SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持
 |---|---|
 | 收集 API ↔ 後台 | 收集 API 只認 INGEST_KEY；後台只認登入 Cookie。兩者不可互通 |
 | admin ↔ researcher | **權限一律在伺服器端檢查**（`auth.requireAdmin`），前端隱藏分頁只是方便，不算防護 |
-| 學生身分 | 任何給研究者的回應或匯出都必須經過 `students.relabel()` 或只輸出代號；不得出現 `user:`、email |
+| 學生身分 | 任何給研究者的回應或匯出都必須經過 `students.relabel()` 或只輸出代號；不得出現 `user:`、email。新增 API 時要把路徑加進 `test/auth.test.js` 的不外洩清單 |
 | 資料庫結構 | 只做新增式變更（`CREATE TABLE IF NOT EXISTS`、新增欄位），不刪、不改既有欄位；升級邏輯寫在 `src/db.js` 並有 `test/migration.test.js` |
 | 套件 | 優先用 Node 內建功能。新增套件前要說明理由（目前刻意不用 Jest、ESLint、exceljs） |
 
@@ -45,6 +46,8 @@ SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持
 | 喜歡／收藏 | 每按一次切換 | — | 喜歡切換、不變量 |
 | 學生代號 | 依第一次出現順序 S001…，不跳號、不重編 | — | 代號連續、migration |
 | 測試帳號 | admin 勾選後所有統計與匯出排除，資料保留 | — | 排除測試 |
+| 學生 email | Body 帶 `%email%`（FrameVR 會先詢問學生）；只存在 students 表，只有 admin 看得到 | `COLLECT_EMAIL`（預設 1，只影響後台範本） | email 測試 |
+| 研究分析 | 瞥過 < 10 秒；開過教材 ≥ 4 人才分型（廣度 × 深度中位數）；LSA 調整後殘差 Z > 1.96，轉移 < 30 筆標示樣本太少 | `src/analysis.js` 的 CONFIG | `test/analysis.test.js`（含手算 Z = 2.45） |
 
 **不變量**（`test/invariants.test.js` 以 300 組隨機序列檢查）：
 - seq 在工作階段內唯一遞增。
@@ -59,7 +62,7 @@ SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持
 | 指令 | 內容 | 何時跑 |
 |---|---|---|
 | `npm run check` | 語法檢查（全部 JS＋deploy.sh）＋秘密掃描 | 每次 commit 前；CI |
-| `npm test` | 30 項：推算邏輯、回歸（R-01～R-09）、不變量、HTTP 黑箱、權限、Excel、DB 升級 | 每次 commit 前；CI；deploy.sh 部署前 |
+| `npm test` | 34 項：推算邏輯、回歸（R-01～R-11）、不變量、HTTP 黑箱、權限、Excel、DB 升級、研究分析 | 每次 commit 前；CI；deploy.sh 部署前 |
 | CI（`.github/workflows/check.yml`） | Node 20（正式）與 22 各跑一次以上兩項，並實際啟動伺服器打 `/api/frame-action` | 每次 push |
 | UI 檢查 | 用 Playwright 以 admin 與 researcher 各登入一次，確認分頁可見性、沒有 console error | 改 `public/` 時 |
 

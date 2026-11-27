@@ -14,6 +14,7 @@ const auth = require('./src/auth');
 const students = require('./src/students');
 const probes = require('./src/probes');
 const research = require('./src/research');
+const analysis = require('./src/analysis');
 
 const PORT = Number(process.env.PORT || 3060);
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, ''); // 例如 /framevr（掛在既有網域的子路徑時）
@@ -155,6 +156,7 @@ dash.get('/api/clicks', L, wrap((req) => stats.clicks(req.query)));
 dash.get('/api/sequences', L, wrap((req) => stats.sequences(req.query)));
 dash.get('/api/event-list', L, wrap((req) => stats.eventList(req.query)));
 dash.get('/api/frames', L, wrap(() => stats.frames()));
+dash.get('/api/analysis', L, wrap((req) => ({ ...analysis.analyze(req.query), categories: analysis.CATEGORIES, references: analysis.REFERENCES })));
 
 const sendCsv = (res, name) => {
   const stamp = new Date().toISOString().slice(0, 10);
@@ -199,7 +201,7 @@ dash.get('/api/config', A, (req, res) => res.json({
   session_gap_min: Number(process.env.SESSION_GAP_MIN || 15),
   max_material_min: Number(process.env.MAX_MATERIAL_MIN || 10),
   dedupe_ms: Number(process.env.DEDUPE_MS ?? 1000),
-  collect_email: process.env.COLLECT_EMAIL === '1',
+  collect_email: process.env.COLLECT_EMAIL !== '0',
   key_set: !!INGEST_KEY,
 }));
 dash.get('/api/users', A, (req, res) => res.json(auth.listUsers()));
