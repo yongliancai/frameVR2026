@@ -24,11 +24,16 @@ function directory() {
   return map;
 }
 
-// 後台網址裡的學生參數可以是代號（研究者）或原始 ID（管理者）
-function resolveParam(v) {
+// 後台網址裡的學生參數：研究者只會拿到代號（mode='code'）；
+// 管理者拿到的是原始 ID（mode='auto'：先找原始 ID，找不到才當成代號）。
+// 原始 ID 可能剛好長得像代號（例如名牌 S0314），所以不能只看格式判斷（R-12）。
+const existsId = db.prepare('SELECT 1 FROM students WHERE student_id = ?');
+function resolveParam(v, mode = 'code') {
   if (v == null || v === '') return v;
-  const m = CODE_RE.exec(String(v).trim());
-  if (!m) return String(v);
+  const raw = String(v);
+  if (mode === 'auto' && existsId.get(raw)) return raw;
+  const m = CODE_RE.exec(raw.trim());
+  if (!m) return mode === 'auto' ? raw : '\u0000no-such-student';
   const r = q.byId.get(Number(m[1]));
   return r ? r.student_id : '\u0000no-such-student';
 }

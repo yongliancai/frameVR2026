@@ -15,7 +15,7 @@ function filters(q, alias = 'e', tsCol = 'ts') {
   if (from) { where.push(`${alias}.${tsCol} >= @from`); params.from = from; }
   if (to) { where.push(`${alias}.${tsCol} <= @to`); params.to = to; }
   if (q.frame) { where.push(`${alias}.frame = @frame`); params.frame = String(q.frame); }
-  if (q.student) { where.push(`${alias}.student_id = @student`); params.student = studentIds.resolveParam(q.student); }
+  if (q.student) { where.push(`${alias}.student_id = @student`); params.student = studentIds.resolveParam(q.student, q._idmode); }
   // 管理者標記為「測試帳號」的學生，統計一律排除
   if (!q.include_excluded) where.push(`${alias}.student_id NOT IN (SELECT student_id FROM students WHERE excluded = 1)`);
   return { sql: where.length ? 'WHERE ' + where.join(' AND ') : '', and: where.length ? ' AND ' + where.join(' AND ') : '', params };
@@ -141,7 +141,7 @@ function students(q) {
 }
 
 function studentDetail(rawId, q) {
-  const id = studentIds.resolveParam(rawId);
+  const id = studentIds.resolveParam(rawId, q && q._idmode);
   const params = { id };
   const sessions = db.prepare(`
     SELECT s.*, ${DUR} AS duration_ms,
@@ -155,7 +155,7 @@ function studentDetail(rawId, q) {
     ORDER BY e.ts, e.seq`).all(params);
 
   // 目前喜好狀態（最後一次 like/unlike、favorite/unfavorite 為準）
-  const prefs = currentPrefs({ student: id });
+  const prefs = currentPrefs({ student: id, _idmode: 'auto' });
   return { student_id: id, sessions, events, preferences: prefs.filter((p) => p.liked || p.favorited) };
 }
 

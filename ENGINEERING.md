@@ -24,7 +24,7 @@ server.js ── checkIngestKey ──> src/frameAction.js  推算工作階段�
                ├─ src/students.js  身分轉換：研究者只看到代號 S001…
                ├─ src/analysis.js  研究分析 A–E（參與度、教材效能、學習者類型、LSA、使用模式）
                ├─ src/research.js  研究用 Excel（src/xlsx.js 產生 .xlsx）
-               └─ public/          原生 JS 後台（app.js、login.html）
+               └─ public/          原生 JS 後台（app.js、login.html、i18n.js 中英切換）
 SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持 1）
 ```
 
@@ -57,14 +57,23 @@ SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持
 - 巡檢後沒有未關閉的教材，也沒有未結束的工作階段。
 - 喜歡與取消喜歡交替出現。
 
+## 3.5 雙語（中文／English）
+
+- 介面預設中文，右上「English」切換，記在瀏覽器（localStorage）。
+- 靜態文字：在 `public/i18n.js` 的 `EN` 字典加「整段中文 → 英文」，畫面產生後自動替換；資料（教材、物件、Frame 名稱、email）不翻譯。
+- 動態組合的文字（數字＋單位、圖表、提示）：在 `app.js` 用 `L(中文, English)` 寫兩種版本。
+- 伺服器產生的文字（研究分析的觀察與分類、Excel）：API 帶 `lang=en`，在 `src/analysis.js`、`src/research.js` 用 `L()`。
+- **新增任何介面文字都要同時給英文**；`test/i18n.test.js` 會檢查伺服器英文輸出與字典，`scripts/check-i18n-ui.js` 檢查畫面。
+
 ## 4. 驗證指令
 
 | 指令 | 內容 | 何時跑 |
 |---|---|---|
 | `npm run check` | 語法檢查（全部 JS＋deploy.sh）＋秘密掃描 | 每次 commit 前；CI |
-| `npm test` | 34 項：推算邏輯、回歸（R-01～R-11）、不變量、HTTP 黑箱、權限、Excel、DB 升級、研究分析 | 每次 commit 前；CI；deploy.sh 部署前 |
+| `npm test` | 39 項：推算邏輯、回歸（R-01～R-12）、不變量、HTTP 黑箱、權限、Excel、DB 升級、研究分析、英文版 | 每次 commit 前；CI；deploy.sh 部署前 |
 | CI（`.github/workflows/check.yml`） | Node 20（正式）與 22 各跑一次以上兩項，並實際啟動伺服器打 `/api/frame-action` | 每次 push |
 | UI 檢查 | 用 Playwright 以 admin 與 researcher 各登入一次，確認分頁可見性、沒有 console error | 改 `public/` 時 |
+| 英文介面檢查 | `node scripts/check-i18n-ui.js <網址> <帳號> <密碼>`：切英文走過所有分頁，列出未翻譯的文字（需 Playwright，用法見檔頭） | 改 `public/` 的文字時 |
 
 秘密掃描的例外：只有明確的假值可以在同一行加 `secret-scan: allow` 註記，並寫出原因。
 
@@ -82,6 +91,8 @@ SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持
 | R-08 | CI 與正式 Node 版本不同 | CI 矩陣 Node 20／22 | `.github/workflows/check.yml` |
 | R-09 | 金鑰可放網址 | 不接受 `?key=`＋測試 | `server.checkIngestKey` |
 | R-11 | 學生代號跳號（INSERT OR IGNORE 消耗 AUTOINCREMENT） | NOT EXISTS 寫法＋回歸測試 | `src/ingest.js`、`src/db.js` |
+| R-12 | 原始 ID 長得像代號（例如 S0314）時被誤判，學生抽屜空白 | 依角色解讀學生參數（admin 先找原始 ID，researcher 只認代號）＋回歸測試 | `students.resolveParam`、`server.js` 的 `Q(req)` |
+| 部署 Node 版本 | root 直接執行 deploy.sh 用到另一個 Node，原生模組不符 | deploy.sh 固定系統 PATH 並印出 Node 版本 | `deploy.sh` |
 | 金鑰外流 | 金鑰被 commit | `scripts/check-secrets.js`（CI＋deploy 前） | — |
 
 ## 6. 部署與回滾（只由負責人執行）

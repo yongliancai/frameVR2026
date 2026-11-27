@@ -147,16 +147,22 @@ const awrap = (fn) => async (req, res) => {
 const L = auth.requireLogin;
 const A = auth.requireAdmin;
 
+// 查詢參數：管理者的學生參數是原始 ID、研究者的是代號（見 students.resolveParam）
+const Q = (req) => ({ ...req.query, _idmode: req.user.role === 'admin' ? 'auto' : 'code' });
+
 // 統計（所有登入者）
-dash.get('/api/overview', L, wrap((req) => stats.overview(req.query)));
-dash.get('/api/students', L, wrap((req) => stats.students(req.query)));
-dash.get('/api/students/:id', L, wrap((req) => stats.studentDetail(req.params.id, req.query)));
-dash.get('/api/materials', L, wrap((req) => stats.materials(req.query)));
-dash.get('/api/clicks', L, wrap((req) => stats.clicks(req.query)));
-dash.get('/api/sequences', L, wrap((req) => stats.sequences(req.query)));
-dash.get('/api/event-list', L, wrap((req) => stats.eventList(req.query)));
+dash.get('/api/overview', L, wrap((req) => stats.overview(Q(req))));
+dash.get('/api/students', L, wrap((req) => stats.students(Q(req))));
+dash.get('/api/students/:id', L, wrap((req) => stats.studentDetail(req.params.id, Q(req))));
+dash.get('/api/materials', L, wrap((req) => stats.materials(Q(req))));
+dash.get('/api/clicks', L, wrap((req) => stats.clicks(Q(req))));
+dash.get('/api/sequences', L, wrap((req) => stats.sequences(Q(req))));
+dash.get('/api/event-list', L, wrap((req) => stats.eventList(Q(req))));
 dash.get('/api/frames', L, wrap(() => stats.frames()));
-dash.get('/api/analysis', L, wrap((req) => ({ ...analysis.analyze(req.query), categories: analysis.CATEGORIES, references: analysis.REFERENCES })));
+dash.get('/api/analysis', L, wrap((req) => {
+  const en = req.query.lang === 'en';
+  return { ...analysis.analyze(Q(req), en ? 'en' : 'zh'), categories: en ? analysis.CATEGORIES_EN : analysis.CATEGORIES, references: analysis.REFERENCES };
+}));
 
 const sendCsv = (res, name) => {
   const stamp = new Date().toISOString().slice(0, 10);
@@ -168,19 +174,20 @@ dash.get('/api/export/:kind.csv', L, (req, res, next) => {
   if (kind === 'probes') return next();
   if (!['events', 'sessions'].includes(kind)) return res.status(404).end();
   sendCsv(res, kind);
-  (kind === 'events' ? stats.exportEventsCsv : stats.exportSessionsCsv)(req.query, (chunk) => res.write(chunk), req.user.role);
+  (kind === 'events' ? stats.exportEventsCsv : stats.exportSessionsCsv)(Q(req), (chunk) => res.write(chunk), req.user.role);
   res.end();
 });
 
 // 研究用 Excel（依目前篩選條件；研究者版本只有代號）
 dash.get('/api/export/research.xlsx', L, (req, res) => {
   try {
-    const buf = research.buildWorkbook(req.query, req.user.role, {
+    const lang = req.query.lang === 'en' ? 'en' : 'zh';
+    const buf = research.buildWorkbook(Q(req), req.user.role, {
       gap: Number(process.env.SESSION_GAP_MIN || 15), maxMat: Number(process.env.MAX_MATERIAL_MIN || 10), dedupe: Number(process.env.DEDUPE_MS ?? 1000) / 1000,
-    });
+    }, lang);
     const stamp = new Date().toISOString().slice(0, 10);
     res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.set('Content-Disposition', `attachment; filename="framevr-research-${stamp}.xlsx"`);
+    res.set('Content-Disposition', `attachment; filename="framevr-research-${stamp}${lang === 'en' ? '-en' : ''}.xlsx"`);
     res.send(buf);
   } catch (e) { console.error(e); res.status(500).json({ ok: false, error: e.message }); }
 });

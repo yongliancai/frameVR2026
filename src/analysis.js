@@ -19,6 +19,19 @@ const CODES = {
   EN: '進入', OM: '開啟展板教材', OV: '開啟影片', CM: '點3D模型', CB: '點互動按鈕', CO: '點其他物件',
   LK: '喜歡', UL: '取消喜歡', FV: '收藏', UF: '取消收藏', EX: '離開',
 };
+const CODES_EN = {
+  EN: 'Enter', OM: 'Open board', OV: 'Open video', CM: 'Click 3D model', CB: 'Click button', CO: 'Click other object',
+  LK: 'Like', UL: 'Unlike', FV: 'Favorite', UF: 'Unfavorite', EX: 'Leave',
+};
+const PROFILE_EN = { 深度探索型: 'Deep explorer', 廣泛瀏覽型: 'Broad browser', 專注聚焦型: 'Focused viewer', 淺嘗即止型: 'Light sampler', 未開啟教材: 'No materials opened' };
+const PROFILE_DESC_EN = {
+  'Deep explorer': 'Views many materials and stays long on each (breadth and depth at or above the median)',
+  'Broad browser': 'Views many materials but briefly',
+  'Focused viewer': 'Views fewer materials but stays longer on each',
+  'Light sampler': 'Views few materials, briefly',
+  'No materials opened': 'Only clicked models or buttons; never opened a material',
+};
+
 function codeOf(e) {
   switch (e.event_type) {
     case 'session_start': return 'EN';
@@ -98,7 +111,7 @@ const PROFILE_DESC = {
   未開啟教材: '只點了模型或按鈕，沒有開啟任何教材',
 };
 
-function analyze(q) {
+function analyze(q, lang = 'zh') {
   const events = stats.eventRows(q);
   const sessions = stats.sessionList(q);
   const prefs = stats.currentPrefs(q);
@@ -223,6 +236,8 @@ function analyze(q) {
     median_depth_s: medD,
   };
 
+  const observations = observe({ summary, materials, profileCounts, canProfile, lsa, engagement }, lang);
+  if (lang === 'en') return toEnglish({ summary, engagement, materials, canProfile, medB, medD, profileCounts, lsa, lengthBins, observations });
   return {
     config: CONFIG, summary,
     engagement: engagement.sort((a, b) => b.total_min - a.total_min),
@@ -230,47 +245,75 @@ function analyze(q) {
     profiles: { available: canProfile, min_n: CONFIG.minProfileN, median_breadth_pct: medB, median_depth_s: medD, counts: profileCounts, descriptions: PROFILE_DESC },
     lsa, codes: CODES,
     usage: { length_bins: lengthBins, first_picks: materials.filter((m) => m.first_picks).map((m) => ({ name: m.name, first_picks: m.first_picks })).sort((a, b) => b.first_picks - a.first_picks) },
-    observations: observe({ summary, materials, profileCounts, canProfile, lsa, engagement }),
+    observations,
+  };
+}
+
+// 英文版輸出：類型名稱、行為編碼、時長分組改成英文（數值不變）
+function toEnglish({ summary, engagement, materials, canProfile, medB, medD, profileCounts, lsa, lengthBins, observations }) {
+  const counts = {};
+  for (const [k, v] of Object.entries(profileCounts)) counts[PROFILE_EN[k]] = v;
+  return {
+    config: CONFIG, summary,
+    engagement: engagement.sort((a, b) => b.total_min - a.total_min).map((r) => ({ ...r, profile: r.profile ? PROFILE_EN[r.profile] : null })),
+    materials,
+    profiles: { available: canProfile, min_n: CONFIG.minProfileN, median_breadth_pct: medB, median_depth_s: medD, counts, descriptions: PROFILE_DESC_EN },
+    lsa: { ...lsa, codes: lsa.codes.map((c) => ({ ...c, label: CODES_EN[c.code] })) },
+    codes: CODES_EN,
+    usage: {
+      length_bins: lengthBins.map((b) => ({ ...b, label: b.label.replace(' 分鐘以上', '+ min').replace(' 分鐘', ' min') })),
+      first_picks: materials.filter((m) => m.first_picks).map((m) => ({ name: m.name, first_picks: m.first_picks })).sort((a, b) => b.first_picks - a.first_picks),
+    },
+    observations,
   };
 }
 
 // 根據資料自動產生的觀察（描述性，不做因果推論）
-function observe({ summary, materials, profileCounts, canProfile, lsa, engagement }) {
+function observe({ summary, materials, profileCounts, canProfile, lsa, engagement }, lang = 'zh') {
+  const L = (zh, en) => (lang === 'en' ? en : zh);
+  const codeName = (c) => (lang === 'en' ? CODES_EN : CODES)[c];
+  const profName = (k) => (lang === 'en' ? PROFILE_EN[k] : k);
   const out = [];
   const n = summary.students;
-  if (!n) return [{ level: 'info', text: '目前篩選範圍內還沒有學生資料。' }];
-  if (n < 10) out.push({ level: 'warn', text: `目前只有 ${n} 位學生，以下觀察僅供參考；正式分析建議累積更多樣本。` });
+  if (!n) return [{ level: 'info', text: L('目前篩選範圍內還沒有學生資料。', 'No student data in the selected range yet.') }];
+  if (n < 10) out.push({ level: 'warn', text: L(`目前只有 ${n} 位學生，以下觀察僅供參考；正式分析建議累積更多樣本。`, `Only ${n} student(s) so far; treat these observations as tentative and collect a larger sample before formal analysis.`) });
 
   const withViews = materials.filter((m) => m.holding_mean_s != null);
   if (materials.length >= 2 && materials[0].attraction_pct !== materials[materials.length - 1].attraction_pct) {
     const top = materials[0]; const low = materials[materials.length - 1];
-    out.push({ level: 'info', category: 'B', text: `吸引力最高的教材是「${top.name}」（${top.attraction_pct}% 的學生開啟過），最低的是「${low.name}」（${low.attraction_pct}%）。` });
+    out.push({ level: 'info', category: 'B', text: L(`吸引力最高的教材是「${top.name}」（${top.attraction_pct}% 的學生開啟過），最低的是「${low.name}」（${low.attraction_pct}%）。`,
+      `The most attractive material is "${top.name}" (opened by ${top.attraction_pct}% of students); the least is "${low.name}" (${low.attraction_pct}%).`) });
   }
   const byHold = [...withViews].sort((a, b) => b.holding_mean_s - a.holding_mean_s);
   if (withViews.length >= 2 && byHold[0].holding_mean_s !== byHold[byHold.length - 1].holding_mean_s) {
-    out.push({ level: 'info', category: 'B', text: `平均停留最久的是「${byHold[0].name}」（${byHold[0].holding_mean_s} 秒），最短的是「${byHold[byHold.length - 1].name}」（${byHold[byHold.length - 1].holding_mean_s} 秒）。` });
+    const a = byHold[0]; const z = byHold[byHold.length - 1];
+    out.push({ level: 'info', category: 'B', text: L(`平均停留最久的是「${a.name}」（${a.holding_mean_s} 秒），最短的是「${z.name}」（${z.holding_mean_s} 秒）。`,
+      `Longest average view: "${a.name}" (${a.holding_mean_s} s); shortest: "${z.name}" (${z.holding_mean_s} s).`) });
   }
   for (const m of materials) {
     if (m.glance_pct != null && m.glance_pct >= 50 && m.opens >= 3) {
-      out.push({ level: 'attention', category: 'B', text: `「${m.name}」有 ${m.glance_pct}% 的開啟在 ${CONFIG.glanceSec} 秒內就離開，可檢查內容是否過難、過長或與學習目標連結不清楚。` });
+      out.push({ level: 'attention', category: 'B', text: L(`「${m.name}」有 ${m.glance_pct}% 的開啟在 ${CONFIG.glanceSec} 秒內就離開，可檢查內容是否過難、過長或與學習目標連結不清楚。`,
+        `${m.glance_pct}% of views of "${m.name}" ended within ${CONFIG.glanceSec} s. Check whether it is too hard, too long, or unclear in how it links to the learning goal.`) });
     }
   }
   if (summary.diligent_pct != null) {
-    out.push({ level: 'info', category: 'B', text: `${summary.diligent_pct}% 的學生看過超過一半的教材（%DV，Serrell 1998 以 51% 以上為「全面使用」的參考）。` });
+    out.push({ level: 'info', category: 'B', text: L(`${summary.diligent_pct}% 的學生看過超過一半的教材（%DV，Serrell 1998 以 51% 以上為「全面使用」的參考）。`,
+      `${summary.diligent_pct}% of students viewed more than half of the materials (%DV; Serrell 1998 uses 51% or more as a benchmark for thorough use).`) });
   }
   if (canProfile) {
     const top = Object.entries(profileCounts).filter(([k]) => k !== '未開啟教材').sort((a, b) => b[1] - a[1])[0];
-    if (top && top[1]) out.push({ level: 'info', category: 'C', text: `人數最多的學習者類型是「${top[0]}」（${top[1]} 人）。` });
+    if (top && top[1]) out.push({ level: 'info', category: 'C', text: L(`人數最多的學習者類型是「${top[0]}」（${top[1]} 人）。`, `The most common learner type is "${profName(top[0])}" (${top[1]} student${top[1] === 1 ? '' : 's'}).`) });
   } else {
-    out.push({ level: 'info', category: 'C', text: `開過教材的學生少於 ${CONFIG.minProfileN} 人，暫不分型。` });
+    out.push({ level: 'info', category: 'C', text: L(`開過教材的學生少於 ${CONFIG.minProfileN} 人，暫不分型。`, `Fewer than ${CONFIG.minProfileN} students opened materials, so learner types are not assigned yet.`) });
   }
-  if (profileCounts['未開啟教材']) out.push({ level: 'attention', category: 'A', text: `有 ${profileCounts['未開啟教材']} 位學生只點了模型或按鈕，沒有開啟任何教材。` });
+  const none = profileCounts['未開啟教材'];
+  if (none) out.push({ level: 'attention', category: 'A', text: L(`有 ${none} 位學生只點了模型或按鈕，沒有開啟任何教材。`, `${none} student${none === 1 ? '' : 's'} only clicked models or buttons and never opened a material.`) });
   const oneShot = engagement.filter((r) => r.sessions === 1).length;
-  if (n >= 5) out.push({ level: 'info', category: 'A', text: `${pct(oneShot, n)}% 的學生只使用過 1 次；使用時長中位數 ${summary.median_total_min} 分鐘。` });
+  if (n >= 5) out.push({ level: 'info', category: 'A', text: L(`${pct(oneShot, n)}% 的學生只使用過 1 次；使用時長中位數 ${summary.median_total_min} 分鐘。`, `${pct(oneShot, n)}% of students used it only once; median total time is ${summary.median_total_min} min.`) });
   if (lsa.N) {
-    if (!lsa.enough) out.push({ level: 'warn', category: 'D', text: `行為轉移只有 ${lsa.N} 筆（建議至少 ${CONFIG.minLsaN} 筆），序列分析結果不穩定。` });
-    const top = lsa.significant.slice(0, 3).map((c) => `${CODES[c.from]} → ${CODES[c.to]}（Z = ${c.z}）`);
-    if (top.length) out.push({ level: 'info', category: 'D', text: `顯著的行為轉移（Z > ${CONFIG.zCritical}）：${top.join('、')}。` });
+    if (!lsa.enough) out.push({ level: 'warn', category: 'D', text: L(`行為轉移只有 ${lsa.N} 筆（建議至少 ${CONFIG.minLsaN} 筆），序列分析結果不穩定。`, `Only ${lsa.N} behaviour transitions (at least ${CONFIG.minLsaN} recommended); sequential analysis is unstable.`) });
+    const top = lsa.significant.slice(0, 3).map((c) => `${codeName(c.from)} → ${codeName(c.to)}${L('（', ' (')}Z = ${c.z}${L('）', ')')}`);
+    if (top.length) out.push({ level: 'info', category: 'D', text: L(`顯著的行為轉移（Z > ${CONFIG.zCritical}）：${top.join('、')}。`, `Significant transitions (Z > ${CONFIG.zCritical}): ${top.join('; ')}.`) });
   }
   return out;
 }
@@ -294,6 +337,24 @@ const CATEGORIES = [
     indicators: '使用時長分組、首選教材、時段' },
 ];
 
+const CATEGORIES_EN = [
+  { key: 'A', title: 'A. Engagement', question: 'How engaged are students? Is engagement related to learning outcomes?',
+    methods: 'Descriptive statistics (mean, median, distribution); merge pre/post-tests by student code and run correlation or regression (e.g., material time → post-test, controlling for pre-test).',
+    indicators: 'Sessions, active days, total time, material breadth (% viewed), depth (mean seconds per view), revisits, glance rate' },
+  { key: 'B', title: 'B. Material effectiveness', question: 'Which materials attract students, which hold their attention, and which need revision?',
+    methods: 'Attracting power and holding power from museum visitor studies, plus %DV (Shettel 1973; Serrell 1998); compare material types with chi-square or Kruskal–Wallis tests.',
+    indicators: 'Attraction %, mean/median view seconds, glance rate, revisit rate, first picks, like rate' },
+  { key: 'C', title: 'C. Learner types', question: 'What different learning patterns do students show, and do outcomes differ between them?',
+    methods: 'The dashboard splits students into four types at the medians of breadth × depth for a quick view. For formal research, run K-means or hierarchical clustering on the raw indicators in the Excel file (standardise first), then compare groups with ANOVA or chi-square.',
+    indicators: 'Deep explorer, Broad browser, Focused viewer, Light sampler, No materials opened' },
+  { key: 'D', title: 'D. Behaviour sequences (LSA)', question: 'Which actions significantly tend to follow one another, e.g., do students often press Like after opening a material?',
+    methods: 'Lag sequential analysis (Bakeman & Quera 2011): code behaviours → transition frequency table → adjusted residual Z; Z > 1.96 is significant (p < .05) and can be drawn as a transition diagram. Event-level data also supports process mining. LSA is the most common method in immersive-learning behaviour research.',
+    indicators: 'Behaviour codes, transition counts, expected counts, Z values, significant transitions' },
+  { key: 'E', title: 'E. Usage patterns', question: 'How long do students use it, which material do they start with, and when do they use it?',
+    methods: 'Session-length distribution, first-pick counts, weekday × hour heatmap (Overview tab); compare classes or test sessions.',
+    indicators: 'Session-length groups, first picks, time of day' },
+];
+
 const REFERENCES = [
   'Bakeman, R., & Quera, V. (2011). Sequential analysis and observational methods for the behavioral sciences. Cambridge University Press.',
   'Serrell, B. (1998). Paying attention: Visitors and museum exhibitions. American Association of Museums.',
@@ -301,4 +362,4 @@ const REFERENCES = [
   'Behavioral analysis in immersive learning environments: A systematic literature review and research agenda (2024). arXiv:2405.03442.',
 ];
 
-module.exports = { analyze, lagSequential, classify, codeOf, CONFIG, CODES, CATEGORIES, REFERENCES, PROFILE_DESC };
+module.exports = { analyze, lagSequential, classify, codeOf, CONFIG, CODES, CODES_EN, CATEGORIES, CATEGORIES_EN, REFERENCES, PROFILE_DESC, PROFILE_EN, PROFILE_DESC_EN };

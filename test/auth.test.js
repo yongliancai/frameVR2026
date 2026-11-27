@@ -120,6 +120,28 @@ test('登出後 cookie 失效；改資料的請求必須是 JSON', async () => {
   assert.equal((await get('/api/me', a.cookie)).status, 401);
 });
 
+
+// R-12：原始 ID 長得像代號（例如名牌 S0314）時，管理者用原始 ID 查詢不能被誤認成代號
+test('R-12 原始 ID 像代號時，管理者與研究者都查到正確的學生', async () => {
+  const fa = (b) => fetch(srv.base + '/api/frame-action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY }, body: JSON.stringify(b) });
+  await fa({ event: 'material', student: 'S0314', frame: 'f', asset_name: 'Poster Z', asset_type: 'images' });
+  const a = await login(ADMIN);
+  const d = await (await get('/api/students/S0314', a.cookie)).json();
+  assert.equal(d.student_id, 'S0314');
+  assert.ok(d.sessions.length >= 1, '管理者用原始 ID 應查到工作階段');
+  assert.match(d.student_code, /^S\d{3}$/);
+  // 研究者用代號查詢同一位學生
+  await send('POST', '/api/users', a.cookie, { username: 'researcher2', password: 'research-pass-789', role: 'researcher' });
+  const r = await login({ username: 'researcher2', password: 'research-pass-789' });
+  const viaCode = await (await get('/api/students/' + d.student_code, r.cookie)).json();
+  assert.equal(viaCode.student_id, d.student_code);
+  assert.ok(viaCode.sessions.length >= 1, '研究者用代號應查到工作階段');
+  // 研究者不能用原始 ID 查
+  const raw = await (await get('/api/students/S0314', r.cookie)).json();
+  assert.equal(raw.sessions.length, 0);
+});
+
+// 放最後：會讓測試 IP 15 分鐘內無法登入
 test('連續猜密碼會被暫停', async () => {
   let last;
   for (let i = 0; i < 11; i++) last = await login({ username: 'admin', password: 'guess-' + i });

@@ -2,13 +2,24 @@
 (function () {
   'use strict';
 
+  // ---------- 語言 ----------
+  const L = window.I18N ? window.I18N.L : (zh) => zh;
+  const T = window.I18N ? window.I18N.t : (s) => s;
+  const EN_MODE = !!(window.I18N && window.I18N.lang === 'en');
+
   // ---------- 對照表 ----------
-  const EVENT_LABEL = {
+  const EVENT_LABEL = EN_MODE ? {
+    session_start: 'Enter', heartbeat: 'Heartbeat', session_end: 'Leave', click: 'Click',
+    material_open: 'Open material', material_close: 'Close material',
+    like: 'Like', unlike: 'Unlike', favorite: 'Favorite', unfavorite: 'Unfavorite',
+  } : {
     session_start: '進入', heartbeat: '心跳', session_end: '離開', click: '點擊',
     material_open: '開啟教材', material_close: '關閉教材',
     like: '喜歡', unlike: '取消喜歡', favorite: '收藏', unfavorite: '取消收藏',
   };
-  const TYPE_LABEL = { board: '展板', model: '3D 模型', video: '影片', button: '互動按鈕', material: '教材', other: '其他' };
+  const TYPE_LABEL = EN_MODE
+    ? { board: 'Board', model: '3D model', video: 'Video', button: 'Button', material: 'Material', other: 'Other' }
+    : { board: '展板', model: '3D 模型', video: '影片', button: '互動按鈕', material: '教材', other: '其他' };
   const TYPE_SLOT = { board: 1, model: 2, video: 3, button: 4, material: 5, other: 7 }; // 顏色跟著物件類型，不跟排名
 
   const state = { range: '30', from: '', to: '', frame: '', view: 'overview', charts: [], timer: null, eventsOffset: 0, eventsType: '', eventsStudent: '', studentSort: { key: 'total_ms', dir: -1 } };
@@ -25,13 +36,14 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtNum = (n) => (n == null ? '–' : Number(n).toLocaleString('zh-TW'));
   function fmtDur(ms) {
-    if (!ms || ms < 0) return '0 秒';
+    const U = EN_MODE ? { s: ' s', m: ' min', h: ' h ' } : { s: ' 秒', m: ' 分', h: ' 小時 ' };
+    if (!ms || ms < 0) return '0' + U.s;
     const s = Math.round(ms / 1000);
-    if (s < 60) return s + ' 秒';
+    if (s < 60) return s + U.s;
     const m = Math.floor(s / 60), r = s % 60;
-    if (m < 60) return m + ' 分' + (r ? ' ' + r + ' 秒' : '');
+    if (m < 60) return m + U.m + (r ? ' ' + r + U.s : '');
     const h = Math.floor(m / 60);
-    return h + ' 小時 ' + (m % 60) + ' 分';
+    return h + U.h + (m % 60) + U.m;
   }
   const fmtTime = (ms) => (ms ? new Date(ms).toLocaleString('zh-TW', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '–');
   const fmtClock = (ms) => new Date(ms).toLocaleTimeString('zh-TW', { hour12: false });
@@ -41,20 +53,21 @@
     if (state.from) p.set('from', state.from);
     if (state.to) p.set('to', state.to);
     if (state.frame) p.set('frame', state.frame);
+    if (EN_MODE) p.set('lang', 'en');
     for (const [k, v] of Object.entries(extra || {})) if (v !== '' && v != null) p.set(k, v);
     const s = p.toString();
     return s ? '?' + s : '';
   }
   async function api(path, extra) {
     const r = await fetch('api/' + path + query(extra), { credentials: 'same-origin' });
-    if (r.status === 401) { location.href = 'login.html'; throw new Error('請重新登入'); }
+    if (r.status === 401) { location.href = 'login.html'; throw new Error(L('請重新登入', 'Please sign in again')); }
     if (!r.ok) throw new Error(path + ' ' + r.status);
     return r.json();
   }
   async function send(method, path, body) {
     const r = await fetch('api/' + path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || method + ' ' + path + ' ' + r.status);
+    if (!r.ok) throw new Error(T(j.error) || method + ' ' + path + ' ' + r.status);
     return j;
   }
 
@@ -76,7 +89,7 @@
   }
 
   function makeChart(canvas, cfg) {
-    if (!window.Chart) { canvas.parentElement.innerHTML = '<div class="empty">無法載入圖表程式庫（Chart.js）</div>'; return; }
+    if (!window.Chart) { canvas.parentElement.innerHTML = `<div class="empty">${L('無法載入圖表程式庫（Chart.js）', 'Could not load the chart library (Chart.js)')}</div>`; return; }
     const c = new Chart(canvas, cfg);
     state.charts.push(c);
     return c;
@@ -114,7 +127,7 @@
     try {
       const frames = await api('frames');
       const sel = $('#frame');
-      sel.innerHTML = '<option value="">全部 Frame</option>' + frames.map((f) => `<option value="${esc(f.frame)}">${esc(f.frame)}（${f.sessions}）</option>`).join('');
+      sel.innerHTML = `<option value="">${L('全部 Frame', 'All Frames')}</option>` + frames.map((f) => `<option value="${esc(f.frame)}">${esc(f.frame)}${L('（' + f.sessions + '）', ' (' + f.sessions + ')')}</option>`).join('');
       sel.value = state.frame;
     } catch (e) { /* 忽略 */ }
   }
@@ -133,19 +146,21 @@
   let renderToken = 0;
   async function render(silent) {
     const token = ++renderToken;
-    if (!silent) view.innerHTML = '<div class="empty">載入中…</div>';
+    if (!silent) view.innerHTML = `<div class="empty">${L('載入中…', 'Loading…')}</div>`;
     try {
       const html = await VIEWS[state.view]();
       if (token !== renderToken) return;
       destroyCharts();
       chartDefaults();
       view.innerHTML = html.html;
+      if (window.I18N) window.I18N.translateDom(view);
       html.after && html.after();
-      $('#stamp').textContent = '更新於 ' + fmtClock(Date.now());
+      if (window.I18N) window.I18N.translateDom(view); // after() 可能補上空白狀態文字
+      $('#stamp').textContent = L('更新於 ', 'Updated ') + fmtClock(Date.now());
       syncXlsx();
     } catch (e) {
       console.error(e);
-      if (token === renderToken) view.innerHTML = `<div class="card empty">讀取資料失敗：${esc(e.message)}</div>`;
+      if (token === renderToken) view.innerHTML = `<div class="card empty">${L('讀取資料失敗：', 'Failed to load data: ')}${esc(e.message)}</div>`;
     }
   }
 
@@ -181,13 +196,13 @@
         if (!d.daily.length) { ['c-students', 'c-minutes'].forEach((id) => ($('#' + id).parentElement.innerHTML = '<div class="empty">此範圍沒有資料</div>')); }
         else {
           makeChart($('#c-students'), { type: 'bar', data: { labels: days, datasets: [{ data: d.daily.map((r) => r.students), backgroundColor: slot(1), borderRadius: 4, maxBarThickness: 28 }] },
-            options: { scales: { x: axisX(), y: axisY('人') }, plugins: { tooltip: { callbacks: { title: (i) => d.daily[i[0].dataIndex].day, label: (i) => i.raw + ' 人，' + d.daily[i.dataIndex].sessions + ' 次進入' } } } } });
+            options: { scales: { x: axisX(), y: axisY(L('人', 'Students')) }, plugins: { tooltip: { callbacks: { title: (i) => d.daily[i[0].dataIndex].day, label: (i) => L(i.raw + ' 人，' + d.daily[i.dataIndex].sessions + ' 次進入', i.raw + ' students, ' + d.daily[i.dataIndex].sessions + ' entries') } } } } });
           makeChart($('#c-minutes'), { type: 'line', data: { labels: days, datasets: [{ data: d.daily.map((r) => r.minutes), borderColor: slot(1), backgroundColor: slot(1), borderWidth: 2, pointRadius: d.daily.length > 20 ? 0 : 4, pointHoverRadius: 5, tension: 0 }] },
-            options: { interaction: { mode: 'index', intersect: false }, scales: { x: axisX(), y: axisY('分鐘') }, plugins: { tooltip: { callbacks: { title: (i) => d.daily[i[0].dataIndex].day, label: (i) => i.raw + ' 分鐘' } } } } });
+            options: { interaction: { mode: 'index', intersect: false }, scales: { x: axisX(), y: axisY(L('分鐘', 'Minutes')) }, plugins: { tooltip: { callbacks: { title: (i) => d.daily[i[0].dataIndex].day, label: (i) => i.raw + L(' 分鐘', ' min') } } } } });
         }
         if (counts.length) {
           makeChart($('#c-types'), { type: 'bar', data: { labels: counts.map(([t]) => EVENT_LABEL[t] || t), datasets: [{ data: counts.map(([, n]) => n), backgroundColor: slot(1), borderRadius: 4, barThickness: 14 }] },
-            options: { indexAxis: 'y', scales: { x: axisY(), y: { grid: { display: false }, border: { display: false } } }, plugins: { tooltip: { callbacks: { label: (i) => fmtNum(i.raw) + ' 筆' } } } } });
+            options: { indexAxis: 'y', scales: { x: axisY(), y: { grid: { display: false }, border: { display: false } } }, plugins: { tooltip: { callbacks: { label: (i) => fmtNum(i.raw) + L(' 筆', ' events') } } } } });
         } else $('#c-types').parentElement.innerHTML = '<div class="empty">此範圍沒有資料</div>';
         bindHeatTips();
       },
@@ -198,21 +213,21 @@
     const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
     let max = 0;
     rows.forEach((r) => { grid[r.dow][r.hour] = r.n; max = Math.max(max, r.n); });
-    const days = ['日', '一', '二', '三', '四', '五', '六'];
+    const days = EN_MODE ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
     const order = [1, 2, 3, 4, 5, 6, 0];
     const step = (n) => (n === 0 ? null : Math.min(7, Math.ceil((n / max) * 7)));
-    let html = '<div class="heat" role="img" aria-label="星期與時段的互動熱度"><div></div>';
+    let html = `<div class="heat" role="img" aria-label="${L('星期與時段的互動熱度', 'Activity by weekday and hour')}"><div></div>`;
     for (let h = 0; h < 24; h++) html += `<div class="h">${h % 3 === 0 ? h : ''}</div>`;
     order.forEach((dw) => {
-      html += `<div>週${days[dw]}</div>`;
+      html += `<div>${days[dw]}</div>`;
       for (let h = 0; h < 24; h++) {
         const n = grid[dw][h], s = step(n);
-        html += `<div class="c" data-tip="週${days[dw]} ${h}:00–${h + 1}:00　${n} 筆" style="${s ? 'background:var(--q' + s + ')' : ''}"></div>`;
+        html += `<div class="c" data-tip="${days[dw]} ${h}:00–${h + 1}:00　${n}${L(' 筆', ' events')}" style="${s ? 'background:var(--q' + s + ')' : ''}"></div>`;
       }
     });
-    html += '</div><div class="heat-scale">少';
+    html += `</div><div class="heat-scale">${L('少', 'Fewer')}`;
     for (let i = 1; i <= 7; i++) html += `<span class="c" style="background:var(--q${i})"></span>`;
-    html += '多</div>';
+    html += L('多', 'More') + '</div>';
     return html;
   }
 
@@ -234,7 +249,7 @@
     const th = (k, label, num) => `<th class="sortable ${num ? 'num' : ''}" data-sort="${k}">${label}${key === k ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`;
     return {
       html: `<div class="card">
-        <div class="card-head"><div><h2>學生使用紀錄</h2><p class="sub">${rows.length} 位學生；點一列查看工作階段與操作歷程</p></div>
+        <div class="card-head"><div><h2>學生使用紀錄</h2><p class="sub">${L(rows.length + ' 位學生；點一列查看工作階段與操作歷程', rows.length + ' students; click a row to see sessions and activity')}</p></div>
           <div class="row"><a class="btn" href="api/export/sessions.csv${query()}">匯出工作階段 CSV</a></div></div>
         ${rows.length ? `<div class="table-wrap"><table>
           <thead><tr>${th('student_id', '學生')}${th('sessions', '使用次數', 1)}${th('total_ms', '累積使用時長')}${th('avg_session_ms', '平均每次', 1)}${th('clicks', '點擊', 1)}${th('opens', '開啟教材', 1)}${th('materials', '看過教材數', 1)}${th('material_ms', '教材互動時間', 1)}${th('likes', '喜歡', 1)}${th('favorites', '收藏', 1)}${th('last_seen', '最後使用', 1)}</tr></thead>
@@ -265,7 +280,7 @@
   async function openStudent(id) {
     const drawer = $('#drawer'), body = $('#drawer-body');
     drawer.hidden = false;
-    body.innerHTML = '<div class="empty">載入中…</div>';
+    body.innerHTML = `<div class="empty">${L('載入中…', 'Loading…')}</div>`;
     const d = await api('students/' + encodeURIComponent(id));
     const total = d.sessions.reduce((s, x) => s + x.duration_ms, 0);
     const bySession = new Map();
@@ -287,13 +302,13 @@
         <span>${esc(EVENT_LABEL[e.event_type] || e.event_type)}</span>
         <span class="wrap">${e.target_type ? `<span class="sw" style="background:${slot(TYPE_SLOT[e.target_type] || 7)}"></span>` : ''}${esc(e.target_name || '')}${e.target_type ? ` <span class="pill">${esc(TYPE_LABEL[e.target_type] || e.target_type)}</span>` : ''}</span>
         <span class="t">${e.duration_ms ? fmtDur(e.duration_ms) : ''}</span></li>`).join('');
-      return `<div class="card"><div class="card-head"><div><h2>${fmtTime(s.start_ts)}　${fmtDur(s.duration_ms)}</h2>
-        <p class="sub">工作階段 ${esc(s.session_id)}・${s.end_ts && s.end_reason !== 'timeout' ? '離開 ' + fmtTime(s.end_ts) : (s.online ? '進行中' : '閒置逾時，以最後一次動作 ' + fmtTime(s.last_ts) + ' 當作離開時間')}・${s.frame ? esc(s.frame) : ''}</p></div></div>
-        ${items ? `<ul class="seq">${items}</ul>` : '<div class="empty">沒有互動事件</div>'}</div>`;
+      return `<div class="card"><div class="card-head"><div><h2>${fmtTime(s.start_ts)}${L("　", " · ")}${fmtDur(s.duration_ms)}</h2>
+        <p class="sub">${L('工作階段 ', 'Session ')}${esc(s.session_id)}・${s.end_ts && s.end_reason !== 'timeout' ? L('離開 ', 'Left ') + fmtTime(s.end_ts) : (s.online ? L('進行中', 'In progress') : L('閒置逾時，以最後一次動作 ' + fmtTime(s.last_ts) + ' 當作離開時間', 'Idle timeout; last action at ' + fmtTime(s.last_ts) + ' treated as leaving'))}・${s.frame ? esc(s.frame) : ''}</p></div></div>
+        ${items ? `<ul class="seq">${items}</ul>` : `<div class="empty">${L('沒有互動事件', 'No interaction events')}</div>`}</div>`;
     }).join('');
 
     body.innerHTML = `
-      <h1 id="drawer-title">學生 ${esc(who(d))}</h1>${isAdmin() ? `<p class="sub">代號 ${esc(d.student_code)}・帳號 ID <code>${esc(d.student_id)}</code></p>` : ''}
+      <h1 id="drawer-title">${L('學生 ', 'Student ')}${esc(who(d))}</h1>${isAdmin() ? `<p class="sub">${L('代號 ', 'Code ')}${esc(d.student_code)}${L('・帳號 ID ', ' · Account ID ')}<code>${esc(d.student_id)}</code></p>` : ''}
       <div class="kpis" style="margin-bottom:16px">
         <div class="kpi"><div class="label">使用次數</div><div class="value">${d.sessions.length}<span class="unit">次</span></div></div>
         <div class="kpi"><div class="label">累積使用時長</div><div class="value" style="font-size:22px">${fmtDur(total)}</div></div>
@@ -306,6 +321,7 @@
       <div class="row" style="margin-bottom:10px"><h2 style="font-size:15px;margin:0">操作歷程</h2><span class="sub" style="margin:0;color:var(--muted)">每次工作階段內依先後順序（#）列出</span>
         <a class="btn" style="margin-left:auto" href="api/export/events.csv?student=${encodeURIComponent(id)}">匯出此學生事件 CSV</a></div>
       <div class="grid">${sessionsHtml}</div>`;
+    if (window.I18N) window.I18N.translateDom(body);
   }
   $('#drawer-close').addEventListener('click', () => ($('#drawer').hidden = true));
   $('#drawer').addEventListener('click', (e) => { if (e.target.id === 'drawer') $('#drawer').hidden = true; });
@@ -340,7 +356,7 @@
         const colors = top.map((r) => slot(TYPE_SLOT[r.target_type] || 7));
         const hbar = (data, fmt) => ({ type: 'bar', data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4, barThickness: 14 }] },
           options: { indexAxis: 'y', scales: { x: axisY(), y: { grid: { display: false }, border: { display: false } } }, plugins: { tooltip: { callbacks: { label: fmt } } } } });
-        makeChart($('#c-opens'), hbar(top.map((r) => r.opens), (i) => i.raw + ' 次，' + top[i.dataIndex].students + ' 人'));
+        makeChart($('#c-opens'), hbar(top.map((r) => r.opens), (i) => L(i.raw + ' 次，' + top[i.dataIndex].students + ' 人', i.raw + ' opens, ' + top[i.dataIndex].students + ' students')));
         makeChart($('#c-dwell'), hbar(top.map((r) => Math.round(r.avg_ms / 100) / 10), (i) => fmtDur(top[i.dataIndex].avg_ms)));
       },
     };
@@ -371,7 +387,7 @@
         const top = d.top.slice(0, 15);
         if (!top.length) { $('#c-top').parentElement.innerHTML = '<div class="empty">尚無點擊</div>'; return; }
         makeChart($('#c-top'), { type: 'bar', data: { labels: top.map((r) => r.target_name || r.target_id), datasets: [{ data: top.map((r) => r.clicks), backgroundColor: top.map((r) => slot(TYPE_SLOT[r.target_type] || 7)), borderRadius: 4, barThickness: 14 }] },
-          options: { indexAxis: 'y', scales: { x: axisY(), y: { grid: { display: false }, border: { display: false } } }, plugins: { tooltip: { callbacks: { label: (i) => i.raw + ' 次，' + top[i.dataIndex].students + ' 人' } } } } });
+          options: { indexAxis: 'y', scales: { x: axisY(), y: { grid: { display: false }, border: { display: false } } }, plugins: { tooltip: { callbacks: { label: (i) => L(i.raw + ' 次，' + top[i.dataIndex].students + ' 人', i.raw + ' clicks, ' + top[i.dataIndex].students + ' students') } } } } });
       },
     };
   }
@@ -380,10 +396,10 @@
   async function renderEvents() {
     const limit = 100;
     const d = await api('event-list', { limit, offset: state.eventsOffset, type: state.eventsType, student: state.eventsStudent });
-    const opts = Object.entries(EVENT_LABEL).map(([k, v]) => `<option value="${k}" ${state.eventsType === k ? 'selected' : ''}>${v}（${k}）</option>`).join('');
+    const opts = Object.entries(EVENT_LABEL).map(([k, v]) => `<option value="${k}" ${state.eventsType === k ? 'selected' : ''}>${v}${L('（' + k + '）', ' (' + k + ')')}</option>`).join('');
     return {
       html: `<div class="card">
-        <div class="card-head"><div><h2>事件紀錄</h2><p class="sub">共 ${fmtNum(d.total)} 筆；時間為事件發生時間</p></div>
+        <div class="card-head"><div><h2>事件紀錄</h2><p class="sub">${L('共 ' + fmtNum(d.total) + ' 筆；時間為事件發生時間', fmtNum(d.total) + ' events; times are when each event happened')}</p></div>
           <div class="row">
             <select id="ev-type"><option value="">全部事件</option>${opts}</select>
             <input id="ev-student" placeholder="學生代號，例如 S001" value="${esc(state.eventsStudent)}" style="width:130px;padding:5px 8px;border:1px solid var(--ring);border-radius:8px;background:var(--surface)">
@@ -409,19 +425,19 @@
   const ID_FIELDS = (cfg) => ({ user: '%uniqueUserId%', ...(cfg.collect_email ? { email: '%email%' } : {}), frame: '%frameName%' });
   const ASSET = { asset_id: '%assetId%', asset_name: '%assetName%', asset_type: '%assetType%' };
   const TEMPLATES = (cfg) => [
-    { key: 'auto', title: '通用設定（建議：所有物件都用這一段）', trigger: 'Click/Tap（點擊）；入口方塊用 Proximity（靠近）', note: '伺服器依物件名稱自動判斷：名稱結尾「喜歡」→ 喜歡、「收藏」→ 收藏、「入口」→ 進入、「離開／出口」→ 離開、含「按鈕」→ 互動按鈕，其他都算開啟教材（名稱含展板／模型／影片會自動分類）。',
+    { key: 'auto', title: '通用設定（建議：所有物件都用這一段）', trigger: L('Click/Tap（點擊）；入口方塊用 Proximity（靠近）', 'Click/Tap; use Proximity for the entrance block'), note: L('伺服器依物件名稱自動判斷：名稱結尾「喜歡」→ 喜歡、「收藏」→ 收藏、「入口」→ 進入、「離開／出口」→ 離開、含「按鈕」→ 互動按鈕，其他都算開啟教材（名稱含展板／模型／影片會自動分類）。', 'The server decides from the object name (Chinese keywords): ending in 喜歡 → like, 收藏 → favorite; starting with 入口 → enter, 離開/出口 → leave; containing 按鈕 → button (English like / favorite / enter / exit / button also work). Everything else counts as opening a material.'),
       body: { event: 'auto', ...ID_FIELDS(cfg), ...ASSET } },
-    { key: 'enter', title: '進入（出生點的靠近觸發）', trigger: 'Proximity（靠近）', note: '在出生點放一個透明的大方塊，學生一進場就會觸發，記錄「進入時間」。',
+    { key: 'enter', title: '進入（出生點的靠近觸發）', trigger: L('Proximity（靠近）', 'Proximity'), note: L('在出生點放一個透明的大方塊，學生一進場就會觸發，記錄「進入時間」。', 'Place a large transparent block at the spawn point; it fires as soon as a student arrives and records the entry time.'),
       body: { event: 'enter', ...ID_FIELDS(cfg), ...ASSET } },
-    { key: 'material', title: '開啟教材（展板／影片）', trigger: 'Click/Tap（點擊）', note: '教材名稱會自動帶入物件名稱（%assetName%），請先把物件取好名字。category 依物件改成 board 或 video。',
+    { key: 'material', title: '開啟教材（展板／影片）', trigger: 'Click/Tap', note: L('教材名稱會自動帶入物件名稱（%assetName%），請先把物件取好名字。category 依物件改成 board 或 video。', 'The material name comes from the object name (%assetName%), so name objects first. Set category to board or video.'),
       body: { event: 'material', category: 'board', ...ID_FIELDS(cfg), ...ASSET } },
-    { key: 'click', title: '只記點擊（3D 模型、互動按鈕）', trigger: 'Click/Tap（點擊）', note: '只記錄點擊次數，不算開啟教材。category 填 model 或 button。',
+    { key: 'click', title: '只記點擊（3D 模型、互動按鈕）', trigger: 'Click/Tap', note: L('只記錄點擊次數，不算開啟教材。category 填 model 或 button。', 'Records clicks only, not material opens. Set category to model or button.'),
       body: { event: 'click', category: 'model', ...ID_FIELDS(cfg), ...ASSET } },
-    { key: 'like', title: '喜歡按鈕', trigger: 'Click/Tap（點擊）', note: '每按一次在「喜歡／取消喜歡」之間切換。material 填這顆按鈕對應的教材物件名稱（和教材的物件名稱完全一樣）。',
-      body: { event: 'like', material: '教材物件名稱', ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
-    { key: 'favorite', title: '收藏按鈕', trigger: 'Click/Tap（點擊）', note: '每按一次在「收藏／取消收藏」之間切換，material 同上。',
-      body: { event: 'favorite', material: '教材物件名稱', ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
-    { key: 'leave', title: '離開（選用）', trigger: 'Click/Tap 或 Proximity', note: '放在出口或「結束」按鈕上。沒有設定也沒關係，閒置超過設定時間會自動當作離開。',
+    { key: 'like', title: '喜歡按鈕', trigger: 'Click/Tap', note: L('每按一次在「喜歡／取消喜歡」之間切換。material 填這顆按鈕對應的教材物件名稱（和教材的物件名稱完全一樣）。', 'Each press toggles like / unlike. Set material to the exact object name of the material this button belongs to.'),
+      body: { event: 'like', material: L('教材物件名稱', 'material object name'), ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
+    { key: 'favorite', title: '收藏按鈕', trigger: 'Click/Tap', note: L('每按一次在「收藏／取消收藏」之間切換，material 同上。', 'Each press toggles favorite / unfavorite; material as above.'),
+      body: { event: 'favorite', material: L('教材物件名稱', 'material object name'), ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
+    { key: 'leave', title: '離開（選用）', trigger: L('Click/Tap 或 Proximity', 'Click/Tap or Proximity'), note: L('放在出口或「結束」按鈕上。沒有設定也沒關係，閒置超過設定時間會自動當作離開。', 'Put it on an exit or "Finish" button. Optional: after the idle limit the student is treated as having left.'),
       body: { event: 'leave', ...ID_FIELDS(cfg), asset_name: '%assetName%' } },
   ];
 
@@ -431,7 +447,7 @@
     const url = base + 'api/frame-action';
     const tpl = TEMPLATES(cfg).map((t, i) => (i === 1 ? '<!--SPLIT-->' : i > 1 ? '<!--SPLIT-->' : '') + `
       <div class="card">
-        <div class="card-head"><div><h2>${esc(t.title)}</h2><p class="sub">觸發：${esc(t.trigger)}　${esc(t.note)}</p></div>
+        <div class="card-head"><div><h2>${esc(t.title)}</h2><p class="sub">${L('觸發：', 'Trigger: ')}${esc(t.trigger)}${L('　', ' — ')}${esc(t.note)}</p></div>
           <button class="btn copy" data-copy="${esc(JSON.stringify(t.body, null, 2))}">複製 Body</button></div>
         <pre class="code">${esc(JSON.stringify(t.body, null, 2))}</pre>
       </div>`).join('');
@@ -446,31 +462,32 @@
             <tr><th>API Key</th><td>選你在 FrameVR「PROFILE → API Keys for Interactivity」新增的金鑰（值＝伺服器 .env 的 INGEST_KEY）${cfg.key_set ? '' : '　<b>⚠ 伺服器尚未設定 INGEST_KEY</b>'}</td></tr>
             <tr><th>POST/PUT Body</th><td>依物件用途，複製下方對應的內容</td></tr>
           </tbody></table>
-          <p class="sub" style="margin-top:10px">目前設定：超過 ${cfg.session_gap_min} 分鐘沒有動作就算下一次使用；單次教材互動時間上限 ${cfg.max_material_min} 分鐘；同一人 ${cfg.dedupe_ms / 1000} 秒內重複點同一物件只算一次。學生身分用 FrameVR 帳號（請學生登入）${cfg.collect_email ? '；Body 含 %email%，學生第一次觸發時 FrameVR 會詢問是否同意分享 email' : '，不會跳出同意視窗'}。</p>
+          <p class="sub" style="margin-top:10px">${L(`目前設定：超過 ${cfg.session_gap_min} 分鐘沒有動作就算下一次使用；單次教材互動時間上限 ${cfg.max_material_min} 分鐘；同一人 ${cfg.dedupe_ms / 1000} 秒內重複點同一物件只算一次。學生身分用 FrameVR 帳號（請學生登入）${cfg.collect_email ? '；Body 含 %email%，學生第一次觸發時 FrameVR 會詢問是否同意分享 email' : '，不會跳出同意視窗'}。`,
+            `Current settings: ${cfg.session_gap_min} min without activity starts a new session; one material view is capped at ${cfg.max_material_min} min; repeated clicks on the same object within ${cfg.dedupe_ms / 1000} s count once. Students are identified by their FrameVR account (they must sign in)${cfg.collect_email ? '; the body includes %email%, so FrameVR asks each student once whether to share their email' : ', with no consent pop-up'}.`)}</p>
         </div>
         ${tpl.split('<!--SPLIT-->')[0]}
         <details class="card"><summary><b>進階：個別範本</b>（不想用名稱判斷時才需要）</summary>${tpl.split('<!--SPLIT-->').slice(1).join('')}</details>
         <div class="card"><h2>Frame API 測試（唯讀）</h2>
-          <p class="sub">用 FrameVR 官方 API 讀取物件資料，確認 Action Editor 的設定（triggers）能不能被程式讀到。需要在伺服器 .env 設定 FRAME_API_KEY${cfg.frame_api_key_set ? '' : '　<b>⚠ 目前尚未設定</b>'}。物件 ID 在 FrameVR 右側選單 →「ASSETS IN THIS FRAME」。</p>
+          <p class="sub">${L('用 FrameVR 官方 API 讀取物件資料，確認 Action Editor 的設定（triggers）能不能被程式讀到。需要在伺服器 .env 設定 FRAME_API_KEY', 'Reads object data through the official FrameVR API to check whether Action Editor settings (triggers) are readable. Requires FRAME_API_KEY in the server .env')}${cfg.frame_api_key_set ? '' : L('　<b>⚠ 目前尚未設定</b>', ' <b>⚠ not set yet</b>')}${L('。物件 ID 在 FrameVR 右側選單 →「ASSETS IN THIS FRAME」。', '. Object IDs are in the FrameVR right-hand menu → "ASSETS IN THIS FRAME".')}</p>
           <div class="row" style="margin-bottom:10px">
             <label>Frame <input id="fa-frame" value="${esc(cfg.frame_ref || '')}" placeholder="ncku2026" style="width:120px"></label>
             <button class="btn" id="fa-read-frame">讀取 Frame 資料</button>
           </div>
           <div class="row" style="margin-bottom:10px">
-            <label>類型 <select id="fa-type">${(cfg.asset_types || []).map((t) => `<option>${esc(t)}</option>`).join('')}</select></label>
-            <label>物件 ID <input id="fa-id" placeholder="例如 AbC123xyz" style="width:200px"></label>
+            <label>${L('類型', 'Type')} <select id="fa-type">${(cfg.asset_types || []).map((t) => `<option>${esc(t)}</option>`).join('')}</select></label>
+            <label>${L('物件 ID', 'Object ID')} <input id="fa-id" placeholder="${L('例如 AbC123xyz', 'e.g. AbC123xyz')}" style="width:200px"></label>
             <button class="btn" id="fa-read-asset">讀取物件</button>
           </div>
-          <pre class="code" id="fa-out" style="max-height:480px">尚未查詢</pre>
+          <pre class="code" id="fa-out" style="max-height:480px">${L('尚未查詢', 'Not queried yet')}</pre>
         </div>
-        <div class="card"><div class="card-head"><div><h2>收到的請求</h2><p class="sub">FrameVR 每次呼叫 API 的紀錄（保留最近 ${fmtNum(sum.keep_limit)} 筆）。完整內容請匯出 CSV。</p></div>
+        <div class="card"><div class="card-head"><div><h2>收到的請求</h2><p class="sub">${L(`FrameVR 每次呼叫 API 的紀錄（保留最近 ${fmtNum(sum.keep_limit)} 筆）。完整內容請匯出 CSV。`, `Every API call from FrameVR (latest ${fmtNum(sum.keep_limit)} kept). Export the CSV for full details.`)}</p></div>
           <a class="btn" href="api/export/probes.csv">匯出原始請求 CSV</a></div>
           <div class="kpis">
             <div class="kpi"><div class="label">今天收到</div><div class="value">${fmtNum(sum.today_total)}<span class="unit">筆</span></div></div>
             <div class="kpi"><div class="label">今天被拒絕</div><div class="value">${fmtNum(sum.today_rejected)}<span class="unit">筆</span></div></div>
             <div class="kpi"><div class="label">最後一筆</div><div class="value" style="font-size:16px">${fmtTime(sum.last_ts)}</div></div>
           </div>
-          ${sum.last_rejected ? `<p class="sub">最近一次被拒絕（${fmtTime(sum.last_rejected.time)}）：${esc(sum.last_rejected.rejected)}</p>` : ''}
+          ${sum.last_rejected ? `<p class="sub">${L('最近一次被拒絕（', 'Last rejection (')}${fmtTime(sum.last_rejected.time)}${L('）：', '): ')}${esc(T(sum.last_rejected.rejected))}</p>` : ''}
           ${sum.recent.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>結果</th><th>事件</th><th>物件</th><th>類型</th><th>帶到帳號</th>${cfg.collect_email ? '<th>帶到 email</th>' : ''}</tr></thead><tbody>
             ${sum.recent.map((p) => `<tr><td>${fmtTime(p.time)}</td><td>${p.rejected ? '<b>拒絕</b>' : '接受'}</td><td>${esc(p.event || '')}</td><td>${esc(p.asset_name || '')}</td><td>${esc(p.asset_type || '')}</td><td>${p.user_set ? '✓' : '—'}</td>${cfg.collect_email ? `<td>${p.email_set ? '✓' : '—'}</td>` : ''}</tr>`).join('')}
           </tbody></table></div>` : '<div class="empty">還沒有收到任何請求。設定好後，在 Action Editor 按 Test，或進入 Frame 點一下物件。</div>'}
@@ -478,36 +495,37 @@
       after() {
         const out = $('#fa-out');
         const show = async (url) => {
-          out.textContent = '查詢中…';
+          out.textContent = L('查詢中…', 'Querying…');
           try {
             const r = await fetch(url).then((x) => x.json());
-            const head = r.triggers_found && r.triggers_found.length ? '★ 找到觸發設定 ' + r.triggers_found.length + ' 處：\n' + JSON.stringify(r.triggers_found, null, 2) + '\n\n──── 完整回應 ────\n' : (r.ok ? '（回應中沒有找到 triggers / interactions 欄位）\n\n' : '');
+            const head = r.triggers_found && r.triggers_found.length ? L('★ 找到觸發設定 ' + r.triggers_found.length + ' 處：\n', '★ Found ' + r.triggers_found.length + ' trigger setting(s):\n') + JSON.stringify(r.triggers_found, null, 2) + L('\n\n──── 完整回應 ────\n', '\n\n──── Full response ────\n') : (r.ok ? L('（回應中沒有找到 triggers / interactions 欄位）\n\n', '(No triggers / interactions field in the response)\n\n') : '');
             out.textContent = head + JSON.stringify(r, null, 2);
-          } catch (e) { out.textContent = '查詢失敗：' + e.message; }
+          } catch (e) { out.textContent = L('查詢失敗：', 'Query failed: ') + e.message; }
         };
         $('#fa-read-frame').addEventListener('click', () => show('api/frameapi/frame?frame=' + encodeURIComponent($('#fa-frame').value.trim())));
         $('#fa-read-asset').addEventListener('click', () => {
           const id = $('#fa-id').value.trim();
-          if (!id) { out.textContent = '請輸入物件 ID'; return; }
+          if (!id) { out.textContent = L('請輸入物件 ID', 'Please enter an object ID'); return; }
           show('api/frameapi/asset/' + encodeURIComponent($('#fa-type').value) + '/' + encodeURIComponent(id) + '?frame=' + encodeURIComponent($('#fa-frame').value.trim()));
         });
         view.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
-          try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '已複製'; }
-          catch (e) { b.textContent = '請手動選取'; }
-          setTimeout(() => { b.textContent = b.dataset.copy.startsWith('{') ? '複製 Body' : '複製'; }, 1500);
+          try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = L('已複製', 'Copied'); }
+          catch (e) { b.textContent = L('請手動選取', 'Please copy manually'); }
+          setTimeout(() => { b.textContent = b.dataset.copy.startsWith('{') ? L('複製 Body', 'Copy body') : L('複製', 'Copy'); }, 1500);
         }));
       },
     };
   }
 
   // ---------- 研究分析 ----------
-  const PROFILE_SLOT = { 深度探索型: 1, 廣泛瀏覽型: 2, 專注聚焦型: 3, 淺嘗即止型: 4, 未開啟教材: 7 };
+  const PROFILE_SLOT = { 深度探索型: 1, 廣泛瀏覽型: 2, 專注聚焦型: 3, 淺嘗即止型: 4, 未開啟教材: 7,
+    'Deep explorer': 1, 'Broad browser': 2, 'Focused viewer': 3, 'Light sampler': 4, 'No materials opened': 7 };
   const LEVEL_ICON = { warn: '⚠️', attention: '🔎', info: '•' };
   async function renderAnalysis() {
     const d = await api('analysis');
     const cat = Object.fromEntries(d.categories.map((c) => [c.key, c]));
     const head = (k) => `<h2>${esc(cat[k].title)}</h2><p class="sub"><b>研究問題：</b>${esc(cat[k].question)}</p>
-      <details class="method"><summary>建議分析方法與指標</summary><p>${esc(cat[k].methods)}</p><p class="muted">指標：${esc(cat[k].indicators)}</p></details>`;
+      <details class="method"><summary>建議分析方法與指標</summary><p>${esc(cat[k].methods)}</p><p class="muted">${L('指標：', 'Indicators: ')}${esc(cat[k].indicators)}</p></details>`;
     const sum = d.summary;
     const n = (v, u = '') => (v == null ? '—' : fmtNum(v) + u);
     const zBg = (c) => (c.z == null || c.freq === 0 ? '' : c.significant ? `background:color-mix(in srgb, var(--accent) ${Math.min(80, 20 + c.z * 10)}%, transparent)` : c.z < -d.config.zCritical ? 'color:var(--muted)' : '');
@@ -536,28 +554,28 @@
         <div class="grid g2">
           <div class="card">${head('B')}<div class="chart"><canvas id="c-eff"></canvas></div><p class="sub">橫軸：吸引力（開啟過的學生 %）；縱軸：平均停留秒數。右上 = 吸引人也留得住；右下 = 很多人開但很快離開。</p></div>
           <div class="card">${head('C')}
-            ${d.profiles.available ? `<div class="chart"><canvas id="c-prof"></canvas></div><p class="sub">中位數：廣度 ${n(d.profiles.median_breadth_pct, '%')}、深度 ${n(d.profiles.median_depth_s, ' 秒')}</p>` : `<div class="empty">開過教材的學生少於 ${d.profiles.min_n} 人，暫不分型</div>`}
-            <ul class="legend-list">${profiles.map(([k, v]) => `<li><span class="sw" style="background:${slot(PROFILE_SLOT[k] ?? 7)}"></span><b>${esc(k)}</b> ${v} 人 <span class="muted">— ${esc(d.profiles.descriptions[k])}</span></li>`).join('')}</ul>
+            ${d.profiles.available ? `<div class="chart"><canvas id="c-prof"></canvas></div><p class="sub">${L(`中位數：廣度 ${n(d.profiles.median_breadth_pct, '%')}、深度 ${n(d.profiles.median_depth_s, ' 秒')}`, `Medians: breadth ${n(d.profiles.median_breadth_pct, '%')}, depth ${n(d.profiles.median_depth_s, ' s')}`)}</p>` : `<div class="empty">${L(`開過教材的學生少於 ${d.profiles.min_n} 人，暫不分型`, `Fewer than ${d.profiles.min_n} students opened materials; types not assigned`)}</div>`}
+            <ul class="legend-list">${profiles.map(([k, v]) => `<li><span class="sw" style="background:${slot(PROFILE_SLOT[k] ?? 7)}"></span><b>${esc(k)}</b> ${v}${L(' 人', v === 1 ? ' student' : ' students')} <span class="muted">— ${esc(d.profiles.descriptions[k])}</span></li>`).join('')}</ul>
           </div>
         </div>
 
-        <div class="card"><h2 class="sr-only">B. 教材效能明細</h2><p class="sub"><b>教材效能明細</b>（瞥過 = 停留少於 ${d.config.glanceSec} 秒）</p>
+        <div class="card"><h2 class="sr-only">B. 教材效能明細</h2><p class="sub"><b>${L('教材效能明細', 'Material effectiveness details')}</b>${L(`（瞥過 = 停留少於 ${d.config.glanceSec} 秒）`, ` (glance = viewed under ${d.config.glanceSec} s)`)}</p>
           ${d.materials.length ? `<div class="table-wrap"><table><thead><tr><th>教材</th><th class="num">開啟人數</th><th class="num">吸引力</th><th class="num">平均停留(秒)</th><th class="num">中位停留(秒)</th><th class="num">瞥過率</th><th class="num">回訪率</th><th class="num">首選次數</th><th class="num">喜歡率</th><th class="num">收藏率</th></tr></thead><tbody>
           ${d.materials.map((m) => `<tr><td>${esc(m.name)}</td><td class="num">${m.students}</td><td class="num">${n(m.attraction_pct, '%')}</td><td class="num">${n(m.holding_mean_s)}</td><td class="num">${n(m.holding_median_s)}</td><td class="num">${n(m.glance_pct, '%')}</td><td class="num">${n(m.revisit_pct, '%')}</td><td class="num">${m.first_picks}</td><td class="num">${n(m.liked_pct, '%')}</td><td class="num">${n(m.favorited_pct, '%')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">此範圍沒有教材互動</div>'}
         </div>
 
         <div class="card">${head('D')}
-          ${d.lsa.N ? `${d.lsa.enough ? '' : `<p class="warnline">⚠️ 轉移只有 ${d.lsa.N} 筆（建議至少 ${d.config.minLsaN} 筆），結果僅供參考。</p>`}
+          ${d.lsa.N ? `${d.lsa.enough ? '' : `<p class="warnline">${L(`⚠️ 轉移只有 ${d.lsa.N} 筆（建議至少 ${d.config.minLsaN} 筆），結果僅供參考。`, `⚠️ Only ${d.lsa.N} transitions (at least ${d.config.minLsaN} recommended); treat results as tentative.`)}</p>`}
           <div class="grid g2">
-            <div><p class="sub"><b>顯著的行為轉移</b>（Z &gt; ${d.config.zCritical}，p &lt; .05）</p>
+            <div><p class="sub"><b>${L('顯著的行為轉移', 'Significant transitions')}</b>${L('（', ' (')}Z &gt; ${d.config.zCritical}${L('，', ', ')}p &lt; .05${L('）', ')')}</p>
               ${d.lsa.significant.length ? `<div class="table-wrap"><table><thead><tr><th>前一個行為</th><th></th><th>後一個行為</th><th class="num">次數</th><th class="num">Z</th></tr></thead><tbody>
               ${d.lsa.significant.slice(0, 15).map((c) => `<tr><td>${esc(d.codes[c.from])}</td><td>→</td><td>${esc(d.codes[c.to])}</td><td class="num">${c.freq}</td><td class="num"><b>${c.z}</b></td></tr>`).join('')}</tbody></table></div>
-              ${d.lsa.significant.length > 15 ? `<p class="sub">共 ${d.lsa.significant.length} 個顯著轉移，這裡列出 Z 最大的 15 個；完整清單在 Excel「D-LSA轉移清單」。</p>` : ''}` : '<div class="empty">目前沒有顯著的轉移</div>'}</div>
+              ${d.lsa.significant.length > 15 ? `<p class="sub">${L(`共 ${d.lsa.significant.length} 個顯著轉移，這裡列出 Z 最大的 15 個；完整清單在 Excel「D-LSA轉移清單」。`, `${d.lsa.significant.length} significant transitions; the 15 with the largest Z are shown. The full list is in the Excel sheet "D-LSA transitions".`)}</p>` : ''}` : '<div class="empty">目前沒有顯著的轉移</div>'}</div>
             <div><p class="sub"><b>調整後殘差 Z 矩陣</b>（列 = 前一個行為，欄 = 後一個行為；藍色越深越顯著）</p>
               <div class="table-wrap"><table class="zmat"><thead><tr><th></th>${codes.map((c) => `<th title="${esc(d.codes[c])}">${c}</th>`).join('')}</tr></thead><tbody>
-              ${codes.map((a) => `<tr><th title="${esc(d.codes[a])}">${a}</th>${codes.map((b) => { const c = cell(a, b); return `<td class="num" style="${zBg(c)}" title="${esc(d.codes[a])} → ${esc(d.codes[b])}：${c.freq} 次，期望 ${c.expected}">${c.z == null ? '' : c.z}</td>`; }).join('')}</tr>`).join('')}
+              ${codes.map((a) => `<tr><th title="${esc(d.codes[a])}">${a}</th>${codes.map((b) => { const c = cell(a, b); return `<td class="num" style="${zBg(c)}" title="${esc(d.codes[a])} → ${esc(d.codes[b])}${L(`：${c.freq} 次，期望 ${c.expected}`, `: ${c.freq} observed, ${c.expected} expected`)}">${c.z == null ? '' : c.z}</td>`; }).join('')}</tr>`).join('')}
               </tbody></table></div>
-              <p class="sub">${d.lsa.codes.map((c) => `${c.code} ${esc(c.label)}`).join('、')}</p></div>
+              <p class="sub">${d.lsa.codes.map((c) => `${c.code} ${esc(c.label)}`).join(L('、', ', '))}</p></div>
           </div>` : '<div class="empty">此範圍還沒有行為轉移</div>'}
         </div>
 
@@ -572,15 +590,15 @@
         const mats = d.materials.filter((m) => m.holding_mean_s != null);
         if (mats.length) {
           makeChart($('#c-eff'), { type: 'scatter', data: { datasets: [{ data: mats.map((m) => ({ x: m.attraction_pct, y: m.holding_mean_s, name: m.name })), backgroundColor: slot(1), pointRadius: 6, pointHoverRadius: 8, clip: 10 }] },
-            options: { scales: { x: { ...axisY('吸引力 %'), min: 0, max: 100 }, y: axisY('平均停留（秒）') }, plugins: { tooltip: { callbacks: { label: (i) => `${i.raw.name}：${i.raw.x}%、${i.raw.y} 秒` } } } } });
+            options: { scales: { x: { ...axisY(L('吸引力 %', 'Attraction %')), min: 0, max: 100 }, y: axisY(L('平均停留（秒）', 'Mean view (s)')) }, plugins: { tooltip: { callbacks: { label: (i) => L(`${i.raw.name}：${i.raw.x}%、${i.raw.y} 秒`, `${i.raw.name}: ${i.raw.x}%, ${i.raw.y} s`) } } } } });
         } else $('#c-eff').parentElement.innerHTML = '<div class="empty">尚無教材停留資料</div>';
         if (d.profiles.available) {
-          const groups = Object.keys(PROFILE_SLOT).filter((k) => k !== '未開啟教材');
+          const groups = Object.keys(d.profiles.counts).filter((k) => PROFILE_SLOT[k] !== 7);
           makeChart($('#c-prof'), { type: 'scatter', data: { datasets: groups.map((g) => ({ label: g, data: d.engagement.filter((r) => r.profile === g).map((r) => ({ x: r.breadth_pct, y: r.depth_s ?? 0, name: who(r) })), backgroundColor: slot(PROFILE_SLOT[g]), pointRadius: 6, clip: 10 })) },
-            options: { scales: { x: { ...axisY('教材廣度 %'), min: 0, max: 100 }, y: axisY('教材深度（秒）') }, plugins: { legend: { display: true, position: 'bottom' }, tooltip: { callbacks: { label: (i) => `${i.raw.name}（${i.dataset.label}）：${i.raw.x}%、${i.raw.y} 秒` } } } } });
+            options: { scales: { x: { ...axisY(L('教材廣度 %', 'Breadth %')), min: 0, max: 100 }, y: axisY(L('教材深度（秒）', 'Depth (s)')) }, plugins: { legend: { display: true, position: 'bottom' }, tooltip: { callbacks: { label: (i) => L(`${i.raw.name}（${i.dataset.label}）：${i.raw.x}%、${i.raw.y} 秒`, `${i.raw.name} (${i.dataset.label}): ${i.raw.x}%, ${i.raw.y} s`) } } } } });
         }
         makeChart($('#c-len'), { type: 'bar', data: { labels: d.usage.length_bins.map((b) => b.label), datasets: [{ data: d.usage.length_bins.map((b) => b.count), backgroundColor: slot(1), borderRadius: 4 }] },
-          options: { scales: { x: axisX(), y: axisY('次數') } } });
+          options: { scales: { x: axisX(), y: axisY(L('次數', 'Count')) } } });
       },
     };
   }
@@ -605,7 +623,7 @@
         <div class="card"><h2>學生身分</h2><p class="sub">代號依第一次出現的順序自動編號，研究者只看得到代號。勾選「測試帳號」的資料不會出現在統計與匯出中（資料仍保留，可隨時取消）。</p>
           <div class="table-wrap"><table><thead><tr><th>代號</th><th>Email</th><th>FrameVR 帳號 ID</th><th class="num">事件數</th><th class="num">最後出現</th><th>測試帳號</th><th>備註</th></tr></thead><tbody>
           ${list.map((r) => `<tr><td><b>${esc(r.code)}</b></td><td>${esc(r.email || '—')}</td><td><code>${esc(r.student_id)}</code></td><td class="num">${fmtNum(r.events)}</td><td class="num">${fmtTime(r.last_seen)}</td>
-            <td><input type="checkbox" data-code="${esc(r.code)}" ${r.excluded ? 'checked' : ''} aria-label="${esc(r.code)} 為測試帳號"></td>
+            <td><input type="checkbox" data-code="${esc(r.code)}" ${r.excluded ? 'checked' : ''} aria-label="${esc(r.code)}${L(' 為測試帳號', ' is a test account')}"></td>
             <td><input data-note="${esc(r.code)}" value="${esc(r.note || '')}" placeholder="例如：管理者測試" style="width:160px"></td></tr>`).join('') || '<tr><td colspan="7" class="empty">還沒有學生資料</td></tr>'}
           </tbody></table></div>
         </div>`,
@@ -614,23 +632,23 @@
           e.preventDefault();
           const f = new FormData(e.target);
           try { await send('POST', 'users', Object.fromEntries(f)); render(); }
-          catch (x) { $('#nu-err').textContent = x.message; }
+          catch (x) { $('#nu-err').textContent = T(x.message); }
         });
         view.querySelectorAll('[data-act="pw"]').forEach((b) => b.addEventListener('click', async () => {
-          const pw = prompt('輸入 ' + b.dataset.u + ' 的新密碼（至少 10 個字元）');
+          const pw = prompt(L('輸入 ' + b.dataset.u + ' 的新密碼（至少 10 個字元）', 'New password for ' + b.dataset.u + ' (at least 10 characters)'));
           if (!pw) return;
-          try { await send('PATCH', 'users/' + encodeURIComponent(b.dataset.u), { password: pw }); b.textContent = '已更新'; }
-          catch (x) { alert(x.message); }
+          try { await send('PATCH', 'users/' + encodeURIComponent(b.dataset.u), { password: pw }); b.textContent = L('已更新', 'Updated'); }
+          catch (x) { alert(T(x.message)); }
         }));
         view.querySelectorAll('[data-act="toggle"]').forEach((b) => b.addEventListener('click', async () => {
           try { await send('PATCH', 'users/' + encodeURIComponent(b.dataset.u), { disabled: b.dataset.d === '1' }); render(); }
-          catch (x) { alert(x.message); }
+          catch (x) { alert(T(x.message)); }
         }));
         view.querySelectorAll('input[data-code]').forEach((c) => c.addEventListener('change', async () => {
           try { await send('PATCH', 'student-ids/' + encodeURIComponent(c.dataset.code), { excluded: c.checked }); }
-          catch (x) { alert(x.message); c.checked = !c.checked; }
+          catch (x) { alert(T(x.message)); c.checked = !c.checked; }
         }));
-        view.querySelectorAll('input[data-note]').forEach((c) => c.addEventListener('change', () => send('PATCH', 'student-ids/' + encodeURIComponent(c.dataset.note), { note: c.value }).catch((x) => alert(x.message))));
+        view.querySelectorAll('input[data-note]').forEach((c) => c.addEventListener('change', () => send('PATCH', 'student-ids/' + encodeURIComponent(c.dataset.note), { note: c.value }).catch((x) => alert(T(x.message)))));
       },
     };
   }
@@ -642,7 +660,8 @@
       if (r.status === 401) { location.href = 'login.html'; return; }
       me = await r.json();
     } catch (e) { /* 網路錯誤時以研究者權限顯示 */ }
-    $('#who').textContent = (me.username || '') + (isAdmin() ? '（管理者）' : '（研究者）');
+    $('#who').textContent = (me.username || '') + (isAdmin() ? L('（管理者）', ' (admin)') : L('（研究者）', ' (researcher)'));
+    if (window.I18N) window.I18N.apply();
     document.querySelectorAll('#tabs [data-admin]').forEach((a) => { a.hidden = !isAdmin(); });
     $('#logout').addEventListener('click', async () => { await fetch('api/logout', { method: 'POST' }); location.href = 'login.html'; });
     setRange('30');
