@@ -92,6 +92,7 @@ SQLite：data/framevr.db（WAL，單一程序寫入；PM2 instances 必須維持
 | R-09 | 金鑰可放網址 | 不接受 `?key=`＋測試 | `server.checkIngestKey` |
 | R-11 | 學生代號跳號（INSERT OR IGNORE 消耗 AUTOINCREMENT） | NOT EXISTS 寫法＋回歸測試 | `src/ingest.js`、`src/db.js` |
 | R-12 | 原始 ID 長得像代號（例如 S0314）時被誤判，學生抽屜空白 | 依角色解讀學生參數（admin 先找原始 ID，researcher 只認代號）＋回歸測試 | `students.resolveParam`、`server.js` 的 `Q(req)` |
+| 秘密掃描只看已追蹤檔 | 新檔案還沒 git add 時本機掃描通過、CI 才失敗 | 改為同時掃描未追蹤（非 .gitignore）的檔案，並以負例驗證 | `scripts/check-secrets.js` |
 | 部署 Node 版本 | root 直接執行 deploy.sh 用到另一個 Node，原生模組不符 | deploy.sh 固定系統 PATH 並印出 Node 版本 | `deploy.sh` |
 | 金鑰外流 | 金鑰被 commit | `scripts/check-secrets.js`（CI＋deploy 前） | — |
 

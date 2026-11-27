@@ -1,13 +1,14 @@
 // 英文介面檢查（本機手動執行，需要 Playwright；不在 CI 中）
 // 用法：
 //   DB_PATH=/tmp/demo.db node scripts/seed-demo.js
-//   DB_PATH=/tmp/demo.db PORT=3997 BASE_PATH=/framevr ADMIN_USER=admin ADMIN_PASS=admin-password-123 node server.js &
-//   node scripts/check-i18n-ui.js http://localhost:3997/framevr/ admin admin-password-123
+//   DB_PATH=/tmp/demo.db PORT=3997 BASE_PATH=/framevr ADMIN_USER=<帳號> ADMIN_PASS=<測試密碼> node server.js &
+//   node scripts/check-i18n-ui.js http://localhost:3997/framevr/ <帳號> <測試密碼>
 // 會切到英文、走過每個分頁與學生抽屜，列出仍是中文、且不是資料（教材／物件／Frame 名稱）的文字。
 let chromium;
 try { ({ chromium } = require('playwright')); } catch { console.error('需要 Playwright：npm i -D playwright（或在已安裝的環境執行）'); process.exit(2); }
 
-const [base = 'http://localhost:3997/framevr/', user = 'admin', pass = 'admin-password-123'] = process.argv.slice(2);
+const [base = 'http://localhost:3997/framevr/', user, pass] = process.argv.slice(2);
+if (!user || !pass) { console.error('用法：node scripts/check-i18n-ui.js <網址> <帳號> <密碼>'); process.exit(2); }
 // 刻意保留的中文：語言切換按鈕本身、FrameVR 範本中伺服器辨識用的中文關鍵字
 const ALLOWED = [/^中文$/, /^@aria-label:切換成中文$/, /Chinese keywords/];
 

@@ -13,7 +13,8 @@ const RULES = [
 const ALLOW_FILES = [/^\.env\.example$/, /^test\//, /^scripts\/check-secrets\.js$/];
 
 const files = process.argv.slice(2).length ? process.argv.slice(2)
-  : execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(Boolean);
+  // 含尚未 git add 的新檔（--others，排除 .gitignore），讓本機結果與 CI 一致
+  : execSync('git ls-files --cached --others --exclude-standard', { encoding: 'utf8' }).split('\n').filter(Boolean);
 const problems = [];
 for (const f of files) {
   const base = f.split('/').pop();
